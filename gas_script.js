@@ -11,7 +11,7 @@
 //
 // URL ของ Web app ถูกตั้งไว้ใน src/App.jsx แล้ว
 
-var FOLDER_ID = ""; // ตัวอย่าง: "1A2B3C4D..."
+var FOLDER_ID = "1gS9bMZVdzWOfoHq_Kg5D1YOl8Cq5fmQv"; // Google Drive folder for payment slips
 
 var HEADERS = [
   "วันที่",
