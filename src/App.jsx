@@ -135,30 +135,24 @@ function App() {
         setOcrStatus('กำลังส่งข้อมูล...');
       }
 
-      // Submit to Google Apps Script (Mocking for now unless GAS URL is provided)
-      // TODO: Replace with real GAS Web App URL
-      const GAS_URL = "https://script.google.com/macros/s/AKfycbz8iTV055Xx7Mn2wOsPK1ZHJ1Tlcke-40qnrlxk7uV7RGshFIpBKTMDLTfL4ptznlFA/exec"; 
-      
-      if (GAS_URL === "https://script.google.com/macros/s/AKfycbz8iTV055Xx7Mn2wOsPK1ZHJ1Tlcke-40qnrlxk7uV7RGshFIpBKTMDLTfL4ptznlFA/exec") {
-        // Simulate API call
-        await new Promise(r => setTimeout(r, 1500));
-        setOrderState('success');
-      } else {
-        // Real API call
-        const payload = {
-          orderData: formData,
-          totalCost: totalCost,
-          slipBase64: slipImage.split('base64,')[1],
-          mimeType: slipFile.type,
-          filename: `slip_${Date.now()}_${formData.name}`
-        };
-        
-        await fetch(GAS_URL, {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-        setOrderState('success');
-      }
+      // Send the confirmed order to the deployed Google Apps Script web app.
+      const GAS_URL = "https://script.google.com/macros/s/AKfycbwD6n28H6qnsCrOpCerm7IqccDQTFQ4z_haX7RaBEdmlqPnDIpaInzsrsS7wavgNaxu/exec";
+      const payload = {
+        orderData: formData,
+        totalCost,
+        slipBase64: slipImage.split('base64,')[1],
+        mimeType: slipFile?.type || 'image/jpeg',
+        filename: `slip_${Date.now()}_${formData.name}`
+      };
+
+      // Apps Script web apps do not reliably return browser-readable CORS headers.
+      // no-cors delivers the order while keeping the checkout flow usable.
+      await fetch(GAS_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify(payload)
+      });
+      setOrderState('success');
     } catch (error) {
       console.error(error);
       alert("เกิดข้อผิดพลาดในการตรวจสอบสลิป กรุณาลองอีกครั้ง");
