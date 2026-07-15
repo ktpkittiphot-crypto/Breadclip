@@ -137,9 +137,9 @@ function App() {
 
       // Submit to Google Apps Script (Mocking for now unless GAS URL is provided)
       // TODO: Replace with real GAS Web App URL
-      const GAS_URL = "YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL"; 
+      const GAS_URL = "https://script.google.com/macros/s/AKfycbz8iTV055Xx7Mn2wOsPK1ZHJ1Tlcke-40qnrlxk7uV7RGshFIpBKTMDLTfL4ptznlFA/exec"; 
       
-      if (GAS_URL === "YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL") {
+      if (GAS_URL === "https://script.google.com/macros/s/AKfycbz8iTV055Xx7Mn2wOsPK1ZHJ1Tlcke-40qnrlxk7uV7RGshFIpBKTMDLTfL4ptznlFA/exec") {
         // Simulate API call
         await new Promise(r => setTimeout(r, 1500));
         setOrderState('success');
