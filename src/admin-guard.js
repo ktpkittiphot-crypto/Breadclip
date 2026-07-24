@@ -1,4 +1,38 @@
 const SETTINGS_PIN = window.atob('MTY3OTkw');
+const FORM_MODE_KEY = 'breadclip_admin_form_mode';
+
+const getFormMode = () => {
+  const saved = localStorage.getItem(FORM_MODE_KEY);
+  return ['auto', 'open', 'closed'].includes(saved) ? saved : 'auto';
+};
+
+// Override only the weekday check used by the preorder form.
+// Other date/time formatting, including receipts, continues to use the real date.
+const nativeDateTimeFormat = Intl.DateTimeFormat;
+const activeFormMode = getFormMode();
+
+if (activeFormMode !== 'auto') {
+  const wrappedDateTimeFormat = function DateTimeFormat(locales, options = {}) {
+    const formatter = new nativeDateTimeFormat(locales, options);
+    const isBreadClipWeekdayCheck = options?.weekday === 'short' && options?.timeZone === 'Asia/Bangkok';
+
+    if (!isBreadClipWeekdayCheck) return formatter;
+
+    return new Proxy(formatter, {
+      get(target, property) {
+        if (property === 'format') {
+          return () => (activeFormMode === 'open' ? 'Mon' : 'Sat');
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  };
+
+  wrappedDateTimeFormat.prototype = nativeDateTimeFormat.prototype;
+  wrappedDateTimeFormat.supportedLocalesOf = nativeDateTimeFormat.supportedLocalesOf.bind(nativeDateTimeFormat);
+  Intl.DateTimeFormat = wrappedDateTimeFormat;
+}
 
 let allowNextSettingsClick = false;
 let pendingSettingsButton = null;
@@ -13,6 +47,46 @@ function correctProductLabels() {
     const replacement = replacements[element.textContent.trim()];
     if (replacement) element.textContent = replacement;
   });
+}
+
+function injectAdminFormMode() {
+  const modal = document.querySelector('.modal-card');
+  if (!modal || modal.querySelector('#breadclip-admin-form-mode')) return;
+
+  const saveButton = [...modal.querySelectorAll('button')]
+    .find((button) => button.textContent.includes('บันทึกการตั้งค่า'));
+  if (!saveButton) return;
+
+  const currentMode = getFormMode();
+  const panel = document.createElement('section');
+  panel.id = 'breadclip-admin-form-mode';
+  panel.style.cssText = 'margin:18px 0;padding:14px;border:1px solid #eadaca;border-radius:14px;background:#fff9f2;text-align:left';
+  panel.innerHTML = `
+    <h3 style="margin:0 0 6px;color:#4c2f23">โหมด Admin — สถานะฟอร์ม</h3>
+    <p style="margin:0 0 12px;color:#765;font-size:13px;line-height:1.6">ใช้เปิดหรือปิดฟอร์มชั่วคราวเพื่อทดสอบบนอุปกรณ์นี้</p>
+    <label class="radio" style="display:block;margin:10px 0">
+      <input type="radio" name="breadclipFormMode" value="auto" ${currentMode === 'auto' ? 'checked' : ''}>
+      อัตโนมัติ
+      <span>เปิดจันทร์–ศุกร์ ปิดเสาร์–อาทิตย์</span>
+    </label>
+    <label class="radio" style="display:block;margin:10px 0">
+      <input type="radio" name="breadclipFormMode" value="open" ${currentMode === 'open' ? 'checked' : ''}>
+      เปิดฟอร์มเพื่อทดสอบ
+      <span>เปิดได้แม้เป็นวันเสาร์–อาทิตย์</span>
+    </label>
+    <label class="radio" style="display:block;margin:10px 0">
+      <input type="radio" name="breadclipFormMode" value="closed" ${currentMode === 'closed' ? 'checked' : ''}>
+      ปิดฟอร์มชั่วคราว
+      <span>แสดงหน้าปิดรับพรีออเดอร์</span>
+    </label>
+  `;
+
+  saveButton.before(panel);
+  saveButton.addEventListener('click', () => {
+    const selected = panel.querySelector('input[name="breadclipFormMode"]:checked')?.value || 'auto';
+    localStorage.setItem(FORM_MODE_KEY, selected);
+    window.setTimeout(() => window.location.reload(), 250);
+  }, { capture: true });
 }
 
 function closePinDialog() {
@@ -102,6 +176,12 @@ document.addEventListener('click', (event) => {
   openPinDialog(settingsButton);
 }, true);
 
-const observer = new MutationObserver(correctProductLabels);
+const observer = new MutationObserver(() => {
+  correctProductLabels();
+  injectAdminFormMode();
+});
 observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener('DOMContentLoaded', correctProductLabels);
+window.addEventListener('DOMContentLoaded', () => {
+  correctProductLabels();
+  injectAdminFormMode();
+});
