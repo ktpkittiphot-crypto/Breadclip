@@ -7,9 +7,22 @@ import { generatePayload } from './utils/promptpay';
 const PRODUCTS = [
   { id: 'originalQty', label: 'Tiramisu Original Signature', price: 89 },
   { id: 'thaiTeaQty', label: 'Tiramisu Thai Tea', price: 89 },
-  { id: 'strawberryQty', label: 'Cheese Pie Strawberry', price: 35 },
-  { id: 'blueberryQty', label: 'Cheese Pie Blueberry', price: 35 },
+  { id: 'strawberryQty', label: 'Strawberry Cheese Pie', price: 35 },
+  { id: 'blueberryQty', label: 'Blueberry Cheese Pie', price: 35 },
 ];
+
+const DELIVERY_AREAS = {
+  back_gate: 'หลังมอ',
+  front_gate: 'หน้ามอ',
+  suan_dok: 'สวนดอก',
+  other_faculty: 'คณะอื่น ๆ',
+};
+
+const DELIVERY_TIMES = {
+  noon: '12:00–13:00',
+  evening: '19:00–20:00',
+  other: 'เวลาอื่น',
+};
 
 const DEFAULT_BACKEND = 'https://script.google.com/macros/s/AKfycbyJSHTGFeJOQVoMGk5lxEblPyJ080L3dWKlJ5rhQN-2vprbSF_RWQ2gOKYMG_KiATSq/exec';
 
@@ -72,9 +85,18 @@ function hasMatchingAmount(text, expectedAmount) {
 export default function App() {
   const [stage, setStage] = useState('form');
   const [form, setForm] = useState({
-    name: '', phone: '', social: '',
-    originalQty: 0, thaiTeaQty: 0, strawberryQty: 0, blueberryQty: 0,
-    deliveryOption: 'fine_arts', customAddress: '',
+    name: '',
+    phone: '',
+    social: '',
+    originalQty: 0,
+    thaiTeaQty: 0,
+    strawberryQty: 0,
+    blueberryQty: 0,
+    deliveryOption: 'fine_arts',
+    deliveryArea: 'back_gate',
+    otherArea: '',
+    deliveryTime: 'noon',
+    otherTime: '',
   });
   const [settings, setSettings] = useState({ promptpayId: '', backendUrl: DEFAULT_BACKEND });
   const [draftSettings, setDraftSettings] = useState(settings);
@@ -89,7 +111,11 @@ export default function App() {
   useEffect(() => {
     const saved = localStorage.getItem('breadclip_settings');
     if (saved) {
-      try { setSettings((current) => ({ ...current, ...JSON.parse(saved) })); } catch { /* ignore invalid local data */ }
+      try {
+        setSettings((current) => ({ ...current, ...JSON.parse(saved) }));
+      } catch {
+        // Ignore invalid local data.
+      }
     }
   }, []);
 
@@ -97,9 +123,19 @@ export default function App() {
     () => PRODUCTS.reduce((sum, product) => sum + form[product.id] * product.price, 0),
     [form],
   );
-  const deliveryFee = ['delivery_12', 'delivery_19'].includes(form.deliveryOption) && subtotal < 100 ? 5 : 0;
+  const deliveryFee = form.deliveryOption === 'delivery' ? 5 : 0;
   const total = subtotal + deliveryFee;
   const totalItems = PRODUCTS.reduce((sum, product) => sum + form[product.id], 0);
+
+  const deliveryAreaLabel = form.deliveryArea === 'other_faculty'
+    ? `คณะอื่น ๆ: ${form.otherArea.trim()}`
+    : DELIVERY_AREAS[form.deliveryArea];
+  const deliveryTimeLabel = form.deliveryTime === 'other'
+    ? form.otherTime.trim()
+    : DELIVERY_TIMES[form.deliveryTime];
+  const deliverySummary = form.deliveryOption === 'fine_arts'
+    ? 'รับที่คณะวิจิตรศิลป์ • 12:00–13:00'
+    : `จัดส่ง ${deliveryAreaLabel} • ${deliveryTimeLabel} (+5 บาท)`;
 
   let qrPayload = '';
   try {
@@ -110,7 +146,10 @@ export default function App() {
 
   const updateField = (event) => {
     const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: name === 'phone' ? value.replace(/\D/g, '') : value }));
+    setForm((current) => ({
+      ...current,
+      [name]: name === 'phone' ? value.replace(/\D/g, '') : value,
+    }));
   };
 
   const updateQty = (id, delta) => {
@@ -119,14 +158,22 @@ export default function App() {
 
   const openCheckout = (event) => {
     event.preventDefault();
-    if (!form.name.trim() || !form.phone.trim() || !form.social.trim()) return setStatus('กรุณากรอกข้อมูลผู้สั่งให้ครบ');
+    if (!form.name.trim() || !form.phone.trim() || !form.social.trim()) {
+      return setStatus('กรุณากรอกข้อมูลผู้สั่งให้ครบ');
+    }
     if (totalItems < 1) return setStatus('กรุณาเลือกขนมอย่างน้อย 1 ชิ้น');
-    if (form.deliveryOption === 'other' && !form.customAddress.trim()) return setStatus('กรุณาระบุสถานที่และเวลารับของ');
+    if (form.deliveryOption === 'delivery' && form.deliveryArea === 'other_faculty' && !form.otherArea.trim()) {
+      return setStatus('กรุณาระบุคณะหรือจุดรับของ');
+    }
+    if (form.deliveryOption === 'delivery' && form.deliveryTime === 'other' && !form.otherTime.trim()) {
+      return setStatus('กรุณาระบุเวลาที่ต้องการจัดส่ง');
+    }
     if (!settings.promptpayId.trim()) {
       setDraftSettings(settings);
       setSettingsOpen(true);
       return setStatus('กรุณาตั้งค่าเลขพร้อมเพย์ก่อนชำระเงิน');
     }
+
     setStatus('');
     setSlipCheck({ state: 'idle', message: '' });
     setStage('checkout');
@@ -182,6 +229,9 @@ export default function App() {
       setStatus('กำลังบันทึกออเดอร์…');
 
       const slipDataUrl = await fileToDataUrl(slip);
+      const deliveryDetails = form.deliveryOption === 'delivery'
+        ? `สถานที่: ${deliveryAreaLabel} | เวลา: ${deliveryTimeLabel}`
+        : '';
       const orderData = {
         name: form.name.trim(),
         phone: form.phone.trim(),
@@ -191,8 +241,10 @@ export default function App() {
         thaiTeaQty: form.thaiTeaQty,
         strawberryQty: form.strawberryQty,
         blueberryQty: form.blueberryQty,
-        deliveryOption: form.deliveryOption,
-        customAddress: form.customAddress.trim(),
+        deliveryOption: deliverySummary,
+        deliveryArea: deliveryAreaLabel,
+        deliveryTime: deliveryTimeLabel,
+        customAddress: deliveryDetails,
       };
       const payload = {
         action: 'submitOrder',
@@ -209,8 +261,10 @@ export default function App() {
           strawberry: form.strawberryQty,
           blueberry: form.blueberryQty,
         },
-        delivery: form.deliveryOption,
-        otherDelivery: form.customAddress.trim(),
+        delivery: deliverySummary,
+        deliveryArea: deliveryAreaLabel,
+        deliveryTime: deliveryTimeLabel,
+        otherDelivery: deliveryDetails,
         subtotal,
         deliveryFee,
         total,
@@ -231,11 +285,15 @@ export default function App() {
         body: JSON.stringify(payload),
       });
       const result = await response.json();
-      if (!(result.ok || result.status === 'success')) throw new Error(result.error || result.message || 'บันทึกออเดอร์ไม่สำเร็จ');
+      if (!(result.ok || result.status === 'success')) {
+        throw new Error(result.error || result.message || 'บันทึกออเดอร์ไม่สำเร็จ');
+      }
       setStatus('');
       setStage('success');
     } catch (error) {
-      setSlipCheck((current) => current.state === 'valid' ? current : { state: 'invalid', message: 'ไม่สามารถอ่านยอดเงินจากสลิปนี้ได้ กรุณาใช้รูปที่คมชัดและเห็นยอดเงินครบ' });
+      setSlipCheck((current) => current.state === 'valid'
+        ? current
+        : { state: 'invalid', message: 'ไม่สามารถอ่านยอดเงินจากสลิปนี้ได้ กรุณาใช้รูปที่คมชัดและเห็นยอดเงินครบ' });
       setStatus(`เกิดข้อผิดพลาด: ${error.message}`);
     } finally {
       setProcessStage('');
@@ -244,7 +302,10 @@ export default function App() {
   };
 
   const saveSettings = () => {
-    const next = { promptpayId: draftSettings.promptpayId.trim(), backendUrl: draftSettings.backendUrl.trim() };
+    const next = {
+      promptpayId: draftSettings.promptpayId.trim(),
+      backendUrl: draftSettings.backendUrl.trim(),
+    };
     setSettings(next);
     localStorage.setItem('breadclip_settings', JSON.stringify(next));
     setSettingsOpen(false);
@@ -257,6 +318,15 @@ export default function App() {
       ? 'กำลังส่งออเดอร์…'
       : 'ยืนยันการสั่งซื้อ';
 
+  const detailsStyle = {
+    margin: '10px 0 14px',
+    padding: '14px',
+    border: '1px solid #eadaca',
+    borderRadius: '14px',
+    background: '#fff9f2',
+    textAlign: 'left',
+  };
+
   return (
     <div className="app-shell">
       <header className="hero">
@@ -264,7 +334,6 @@ export default function App() {
         <span className="badge">PRE-ORDER • CHIANG MAI</span>
         <div className="logo-wrap"><BrandLogo /></div>
         <h1>Bread Clip</h1>
-        <p className="hero-bio">โฮมเมดขนมพรีออเดอร์สำหรับชาว มช.</p>
         <span className="cmu-pill">Only at CMU</span>
         <p>เปิดพรีออเดอร์วันจันทร์–ศุกร์ รับขนมวันจันทร์</p>
         <small>เก็บในตู้เย็นได้ 5 วัน • แนะนำให้ทานภายใน 3 วัน</small>
@@ -292,12 +361,42 @@ export default function App() {
 
             <section className="card">
               <h2>วิธีรับของ</h2>
-              <label className="radio"><input type="radio" name="deliveryOption" value="fine_arts" checked={form.deliveryOption === 'fine_arts'} onChange={updateField} /> รับที่คณะวิจิตรศิลป์ <span>ฟรี • 12:00–13:00</span></label>
-              <label className="radio"><input type="radio" name="deliveryOption" value="delivery_12" checked={form.deliveryOption === 'delivery_12'} onChange={updateField} /> จัดส่ง 12:00–13:00 <span>+5 บาท</span></label>
-              <label className="radio"><input type="radio" name="deliveryOption" value="delivery_19" checked={form.deliveryOption === 'delivery_19'} onChange={updateField} /> จัดส่ง 19:00–20:00 <span>+5 บาท</span></label>
-              <label className="radio"><input type="radio" name="deliveryOption" value="other" checked={form.deliveryOption === 'other'} onChange={updateField} /> อื่นๆ</label>
-              {form.deliveryOption === 'other' && <textarea name="customAddress" value={form.customAddress} onChange={updateField} placeholder="กรอกสถานที่และเวลาที่สะดวก" required />}
-              <p className="free-note">ยอดขนมตั้งแต่ 100 บาท ส่งฟรี</p>
+              <label className="radio">
+                <input type="radio" name="deliveryOption" value="fine_arts" checked={form.deliveryOption === 'fine_arts'} onChange={updateField} />
+                รับที่คณะวิจิตรศิลป์
+                <span>ฟรี • 12:00–13:00</span>
+              </label>
+              <label className="radio">
+                <input type="radio" name="deliveryOption" value="delivery" checked={form.deliveryOption === 'delivery'} onChange={updateField} />
+                จัดส่งในพื้นที่ มช.
+                <span><strong>+5 บาท</strong></span>
+              </label>
+
+              {form.deliveryOption === 'delivery' && (
+                <div style={detailsStyle}>
+                  <h3 style={{ margin: '0 0 8px' }}>สถานที่จัดส่ง</h3>
+                  {Object.entries(DELIVERY_AREAS).map(([value, label]) => (
+                    <label className="radio" key={value}>
+                      <input type="radio" name="deliveryArea" value={value} checked={form.deliveryArea === value} onChange={updateField} />
+                      {label}
+                    </label>
+                  ))}
+                  {form.deliveryArea === 'other_faculty' && (
+                    <input name="otherArea" value={form.otherArea} onChange={updateField} placeholder="ระบุคณะ อาคาร หรือจุดนัดรับ" required />
+                  )}
+
+                  <h3 style={{ margin: '18px 0 8px' }}>ช่วงเวลาจัดส่ง</h3>
+                  {Object.entries(DELIVERY_TIMES).map(([value, label]) => (
+                    <label className="radio" key={value}>
+                      <input type="radio" name="deliveryTime" value={value} checked={form.deliveryTime === value} onChange={updateField} />
+                      {label}
+                    </label>
+                  ))}
+                  {form.deliveryTime === 'other' && (
+                    <input name="otherTime" value={form.otherTime} onChange={updateField} placeholder="เช่น 14:30 หรือ 16:00–17:00" required />
+                  )}
+                </div>
+              )}
             </section>
 
             <section className="card total-card"><span>ยอดรวม</span><strong>{total.toLocaleString('th-TH')} บาท</strong></section>
@@ -310,6 +409,7 @@ export default function App() {
           <section className="card checkout-card">
             <h2>ชำระเงิน</h2>
             <div className="total-row"><span>ยอดรวม</span><strong>{total.toLocaleString('th-TH')} บาท</strong></div>
+            <p style={{ margin: '8px 0', color: '#765' }}>{deliverySummary}</p>
             {qrPayload ? <div className="qr-wrap"><QRCode value={qrPayload} size={220} /></div> : <p className="status error">ไม่สามารถสร้าง QR ได้ กรุณาตรวจเลขพร้อมเพย์ในการตั้งค่า</p>}
             <p className="qr-caption">สแกน QR เพื่อชำระยอดตามออเดอร์</p>
             <label className="upload-box" htmlFor="slip"><Upload size={30} /><span>{slip ? 'เปลี่ยนรูปสลิป' : 'แนบสลิปโอนเงิน'}</span></label>
@@ -331,8 +431,8 @@ export default function App() {
           <div className="modal-card">
             <button className="icon-button modal-close" onClick={() => setSettingsOpen(false)} aria-label="ปิด"><X /></button>
             <h2>ตั้งค่าร้าน</h2>
-            <label>เลขพร้อมเพย์<input value={draftSettings.promptpayId} onChange={(e) => setDraftSettings({ ...draftSettings, promptpayId: e.target.value })} placeholder="เบอร์โทรหรือเลขบัตรประชาชน" /></label>
-            <label>Google Apps Script Web App URL<input value={draftSettings.backendUrl} onChange={(e) => setDraftSettings({ ...draftSettings, backendUrl: e.target.value })} placeholder="https://script.google.com/macros/s/.../exec" /></label>
+            <label>เลขพร้อมเพย์<input value={draftSettings.promptpayId} onChange={(event) => setDraftSettings({ ...draftSettings, promptpayId: event.target.value })} placeholder="เบอร์โทรหรือเลขบัตรประชาชน" /></label>
+            <label>Google Apps Script Web App URL<input value={draftSettings.backendUrl} onChange={(event) => setDraftSettings({ ...draftSettings, backendUrl: event.target.value })} placeholder="https://script.google.com/macros/s/.../exec" /></label>
             <button className="primary-button" onClick={saveSettings}>บันทึกการตั้งค่า</button>
           </div>
         </div>
