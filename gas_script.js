@@ -7,14 +7,18 @@ const CONFIG = {
 };
 
 function doGet() {
-  const spreadsheet = getSpreadsheet_();
-  const folder = getSlipFolder_();
-  return json_({
-    ok: true,
-    service: 'Bread Clip order backend',
-    spreadsheetUrl: spreadsheet.getUrl(),
-    folderUrl: folder.getUrl(),
-  });
+  try {
+    const spreadsheet = getSpreadsheet_();
+    const folder = getSlipFolder_();
+    return json_({
+      ok: true,
+      service: 'Bread Clip order backend',
+      spreadsheetUrl: spreadsheet.getUrl(),
+      folderUrl: folder.getUrl(),
+    });
+  } catch (error) {
+    return json_({ ok: false, error: error.message || String(error) });
+  }
 }
 
 function doPost(event) {
@@ -26,13 +30,17 @@ function doPost(event) {
     if (!customer.name || !customer.phone || !customer.contact) throw new Error('Missing customer details.');
 
     const items = extractItems_(payload);
-    const totalItems = Object.keys(items).reduce(function (sum, key) { return sum + Number(items[key] || 0); }, 0);
+    const totalItems = Object.keys(items).reduce(function (sum, key) {
+      return sum + Number(items[key] || 0);
+    }, 0);
     if (totalItems < 1) throw new Error('No products selected.');
 
     const orderId = String(payload.orderId || createOrderId_());
     const sheet = getOrderSheet_();
     const existingRow = findOrderRow_(sheet, orderId);
-    if (existingRow > 0) return json_({ ok: true, status: 'success', duplicate: true, orderId: orderId });
+    if (existingRow > 0) {
+      return json_({ ok: true, status: 'success', duplicate: true, orderId: orderId });
+    }
 
     const slipUrl = saveSlip_(payload, orderId, customer.name);
     const delivery = String(payload.delivery || payload.deliveryOption || (payload.orderData && payload.orderData.deliveryOption) || '');
@@ -43,32 +51,62 @@ function doPost(event) {
     const paymentStatus = String(payload.paymentStatus || 'รอตรวจสอบ');
 
     sheet.appendRow([
-      orderId, new Date(), customer.name, customer.phone, customer.contact,
-      Number(items.original || 0), Number(items.thaiTea || 0),
-      Number(items.strawberry || 0), Number(items.blueberry || 0),
-      delivery, otherDelivery, subtotal, deliveryFee, total,
-      paymentStatus, slipUrl, JSON.stringify(payload),
+      orderId,
+      new Date(),
+      customer.name,
+      customer.phone,
+      customer.contact,
+      Number(items.original || 0),
+      Number(items.thaiTea || 0),
+      Number(items.strawberry || 0),
+      Number(items.blueberry || 0),
+      delivery,
+      otherDelivery,
+      subtotal,
+      deliveryFee,
+      total,
+      paymentStatus,
+      slipUrl,
+      JSON.stringify(payload),
     ]);
 
     return json_({ ok: true, status: 'success', orderId: orderId, slipUrl: slipUrl });
   } catch (error) {
     console.error(error);
-    return json_({ ok: false, status: 'error', error: error.message || String(error), message: error.message || String(error) });
+    return json_({
+      ok: false,
+      status: 'error',
+      error: error.message || String(error),
+      message: error.message || String(error),
+    });
   }
 }
 
+/**
+ * Run this function once from Apps Script after pasting the code.
+ * It automatically detects the Google Sheet bound to the script and saves
+ * both the legacy and current property names. No manual Script Properties setup is needed.
+ */
 function setupBreadClip() {
   const spreadsheet = getSpreadsheet_();
   const sheet = getOrderSheet_();
   const folder = getSlipFolder_();
-  return { spreadsheetUrl: spreadsheet.getUrl(), sheetName: sheet.getName(), folderUrl: folder.getUrl() };
+  return {
+    spreadsheetUrl: spreadsheet.getUrl(),
+    sheetName: sheet.getName(),
+    folderUrl: folder.getUrl(),
+  };
 }
 
 function parsePayload_(event) {
   if (!event) return {};
   const raw = event.postData && event.postData.contents;
   if (raw) {
-    try { return JSON.parse(raw); } catch (error) { throw new Error('Invalid JSON payload.'); }
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      throw new Error('Invalid JSON payload.');
+    }
   }
   if (event.parameter && event.parameter.payload) return JSON.parse(event.parameter.payload);
   return event.parameter || {};
@@ -108,31 +146,71 @@ function saveSlip_(payload, orderId, customerName) {
   const bytes = Utilities.base64Decode(base64);
   const blob = Utilities.newBlob(bytes, mimeType, filename);
   const file = getSlipFolder_().createFile(blob);
-  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (sharingError) { console.warn(sharingError); }
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (sharingError) {
+    console.warn(sharingError);
+  }
   return file.getUrl();
 }
 
 function getSpreadsheet_() {
   const properties = PropertiesService.getScriptProperties();
-  const storedId = properties.getProperty('BREAD_CLIP_SPREADSHEET_ID');
-  if (storedId) return SpreadsheetApp.openById(storedId);
+
+  // A script opened from Google Sheet > Extensions > Apps Script is container-bound.
+  // In that case, this detects the correct sheet automatically.
   const active = SpreadsheetApp.getActiveSpreadsheet();
   if (active) {
-    properties.setProperty('BREAD_CLIP_SPREADSHEET_ID', active.getId());
+    saveSpreadsheetId_(properties, active.getId());
     return active;
   }
+
+  // Support both the old property name and the new one.
+  const storedId = properties.getProperty('SPREADSHEET_ID') ||
+    properties.getProperty('BREAD_CLIP_SPREADSHEET_ID');
+  if (storedId) return SpreadsheetApp.openById(storedId);
+
+  // Standalone scripts also work: create the sheet automatically.
   const created = SpreadsheetApp.create(CONFIG.SPREADSHEET_NAME);
-  properties.setProperty('BREAD_CLIP_SPREADSHEET_ID', created.getId());
+  saveSpreadsheetId_(properties, created.getId());
   return created;
+}
+
+function saveSpreadsheetId_(properties, spreadsheetId) {
+  properties.setProperties({
+    SPREADSHEET_ID: spreadsheetId,
+    BREAD_CLIP_SPREADSHEET_ID: spreadsheetId,
+  }, false);
 }
 
 function getOrderSheet_() {
   const spreadsheet = getSpreadsheet_();
   let sheet = spreadsheet.getSheetByName(CONFIG.SHEET_NAME);
   if (!sheet) sheet = spreadsheet.insertSheet(CONFIG.SHEET_NAME);
-  const headers = ['Order ID','Created At','Customer Name','Phone','Contact','Tiramisu Original','Tiramisu Thai Tea','Cheese Pie Strawberry','Cheese Pie Blueberry','Delivery','Other Delivery','Subtotal','Delivery Fee','Total','Payment Status','Slip URL','Raw Payload'];
+
+  const headers = [
+    'Order ID',
+    'Created At',
+    'Customer Name',
+    'Phone',
+    'Contact',
+    'Tiramisu Original',
+    'Tiramisu Thai Tea',
+    'Cheese Pie Strawberry',
+    'Cheese Pie Blueberry',
+    'Delivery',
+    'Other Delivery',
+    'Subtotal',
+    'Delivery Fee',
+    'Total',
+    'Payment Status',
+    'Slip URL',
+    'Raw Payload',
+  ];
+
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
     sheet.setFrozenRows(1);
   }
   return sheet;
@@ -141,8 +219,10 @@ function getOrderSheet_() {
 function getSlipFolder_() {
   const properties = PropertiesService.getScriptProperties();
   if (FOLDER_ID) return DriveApp.getFolderById(FOLDER_ID);
+
   const storedId = properties.getProperty('BREAD_CLIP_SLIP_FOLDER_ID');
   if (storedId) return DriveApp.getFolderById(storedId);
+
   const folder = DriveApp.createFolder(CONFIG.SLIP_FOLDER_NAME);
   properties.setProperty('BREAD_CLIP_SLIP_FOLDER_ID', folder.getId());
   return folder;
@@ -150,15 +230,25 @@ function getSlipFolder_() {
 
 function findOrderRow_(sheet, orderId) {
   if (sheet.getLastRow() < 2) return -1;
-  const match = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).createTextFinder(orderId).matchEntireCell(true).findNext();
+  const match = sheet
+    .getRange(2, 1, sheet.getLastRow() - 1, 1)
+    .createTextFinder(orderId)
+    .matchEntireCell(true)
+    .findNext();
   return match ? match.getRow() : -1;
 }
 
 function createOrderId_() {
-  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Bangkok', 'yyyyMMddHHmmss');
+  const stamp = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone() || 'Asia/Bangkok',
+    'yyyyMMddHHmmss',
+  );
   return 'BC-' + stamp + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
 }
 
 function json_(data) {
-  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
 }
