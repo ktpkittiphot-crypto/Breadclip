@@ -13,11 +13,15 @@
 
 ## เปิดใช้งาน Google Apps Script
 
-1. เปิด Google Sheet > Extensions > Apps Script
-2. คัดลอก `gas_script.js` ไปวางแทนโค้ดเดิม
-3. Deploy > New deployment > Web app
-4. Execute as: Me และ Who has access: Anyone
-5. นำ Web App URL ไปใส่ในหน้า Settings ของเว็บ
+1. เปิด Google Sheet ปลายทาง แล้วเลือก **Extensions > Apps Script**
+2. เปิดไฟล์ `Code.gs` ใน repository นี้ แล้วคัดลอกทั้งหมดไปแทนโค้ดเดิม
+3. เลือกฟังก์ชัน `setupBreadClip` แล้วกด **Run** หนึ่งครั้ง เพื่ออนุญาตสิทธิ์และตั้งค่า Sheet อัตโนมัติ
+4. ไปที่ **Deploy > Manage deployments**
+5. กดไอคอนดินสอ เลือก **New version** แล้วกด **Deploy**
+6. ตั้ง **Execute as: Me** และ **Who has access: Anyone**
+7. นำ Web App URL ไปใส่ในหน้า Settings ของเว็บ
+
+Backend รุ่นนี้ตรวจหา Google Sheet ที่ผูกกับ Apps Script และตั้งค่า `SPREADSHEET_ID` ให้อัตโนมัติ จึงไม่ต้องเพิ่ม Script Properties เอง
 
 หลังแก้ Apps Script ต้อง Deploy เป็นเวอร์ชันใหม่ทุกครั้ง
 
