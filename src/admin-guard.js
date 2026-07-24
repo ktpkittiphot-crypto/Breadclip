@@ -49,6 +49,13 @@ function correctProductLabels() {
   });
 }
 
+function removeCouponDisclosure() {
+  const targetText = 'ระบบตรวจการใช้ซ้ำจากชื่อ เบอร์โทร หรือช่องทางติดต่อ โดยตรวจจากประวัติออเดอร์ใน Google Sheet';
+  document.querySelectorAll('small').forEach((element) => {
+    if (element.textContent.trim() === targetText) element.remove();
+  });
+}
+
 function injectAdminFormMode() {
   const modal = document.querySelector('.modal-card');
   if (!modal || modal.querySelector('#breadclip-admin-form-mode')) return;
@@ -178,10 +185,12 @@ document.addEventListener('click', (event) => {
 
 const observer = new MutationObserver(() => {
   correctProductLabels();
+  removeCouponDisclosure();
   injectAdminFormMode();
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
 window.addEventListener('DOMContentLoaded', () => {
   correctProductLabels();
+  removeCouponDisclosure();
   injectAdminFormMode();
 });
