@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'react-qr-code';
 import Tesseract from 'tesseract.js';
-import { CheckCircle, Download, Settings, ShoppingBag, Upload, X } from 'lucide-react';
+import { CheckCircle, Download, Settings, ShoppingBag, Tag, Upload, X } from 'lucide-react';
 import { generatePayload } from './utils/promptpay';
 
 const PRODUCTS = [
@@ -56,7 +56,6 @@ function extractAmounts(text) {
   return tokens
     .map((token) => {
       let normalized = token;
-
       if (normalized.includes('.') && normalized.includes(',')) {
         normalized = normalized.replace(/,/g, '');
       } else if (!normalized.includes('.') && /,\d{1,2}$/.test(normalized)) {
@@ -100,6 +99,10 @@ function formatBangkokDate(date = new Date()) {
   }).format(date);
 }
 
+function normalizeCouponCode(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function escapeHtml(value) {
   const replacements = {
     '&': '&amp;',
@@ -128,6 +131,10 @@ function downloadReceipt(receipt) {
     })
     .join('');
 
+  const couponRow = receipt.couponDiscount > 0
+    ? `<div><span>คูปอง ${escapeHtml(receipt.couponCode)}</span><span>−${receipt.couponDiscount.toLocaleString('th-TH')} บาท</span></div>`
+    : '';
+
   const html = `<!doctype html>
 <html lang="th">
 <head>
@@ -140,7 +147,7 @@ function downloadReceipt(receipt) {
     h1{margin:0 0 4px;font-size:28px}h2{margin:0 0 24px;font-size:18px;font-weight:normal}
     .meta{line-height:1.7;margin-bottom:20px}.note{padding:14px;background:#fff3dc;border:1px solid #ead1aa;margin:20px 0;font-weight:bold}
     table{width:100%;border-collapse:collapse;margin:16px 0}th,td{padding:10px 6px;border-bottom:1px solid #ddd;text-align:left}.number{text-align:right}
-    .totals{margin-left:auto;width:min(100%,330px)}.totals div{display:flex;justify-content:space-between;padding:5px 0}.grand{font-size:20px;font-weight:bold;border-top:2px solid #2b1b14;margin-top:5px;padding-top:10px!important}
+    .totals{margin-left:auto;width:min(100%,350px)}.totals div{display:flex;justify-content:space-between;gap:18px;padding:5px 0}.grand{font-size:20px;font-weight:bold;border-top:2px solid #2b1b14;margin-top:5px;padding-top:10px!important}
     .footer{margin-top:28px;text-align:center;color:#666;font-size:13px}@media print{body{background:#fff;padding:0}.receipt{border:0}}
   </style>
 </head>
@@ -163,6 +170,7 @@ function downloadReceipt(receipt) {
     <div class="totals">
       <div><span>ยอดสินค้า</span><span>${receipt.subtotal.toLocaleString('th-TH')} บาท</span></div>
       <div><span>ค่าจัดส่ง</span><span>${receipt.deliveryFee === 0 ? 'ฟรี' : `${receipt.deliveryFee.toLocaleString('th-TH')} บาท`}</span></div>
+      ${couponRow}
       <div class="grand"><span>ยอดชำระ</span><span>${receipt.total.toLocaleString('th-TH')} บาท</span></div>
     </div>
     <div class="note">ชำระเงินแล้ว — รอรับขนมวันจันทร์</div>
@@ -207,6 +215,9 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState(null);
   const [isPreorderOpen, setIsPreorderOpen] = useState(() => isPreorderOpenNow());
+  const [couponInput, setCouponInput] = useState('');
+  const [coupon, setCoupon] = useState({ state: 'idle', code: '', discount: 0, message: '' });
+  const [couponApplying, setCouponApplying] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('breadclip_settings');
@@ -236,20 +247,16 @@ export default function App() {
     [form],
   );
 
-  // จัดส่งคิด 5 บาทเฉพาะยอดสินค้าต่ำกว่า 100 บาท
   const deliveryFee = form.deliveryOption === 'delivery' && subtotal < 100 ? 5 : 0;
-  const total = subtotal + deliveryFee;
+  const couponDiscount = coupon.state === 'valid' ? coupon.discount : 0;
+  const totalBeforeDiscount = subtotal + deliveryFee;
+  const total = Math.max(0, totalBeforeDiscount - couponDiscount);
   const totalItems = PRODUCTS.reduce((sum, product) => sum + form[product.id], 0);
 
   const deliveryAreaLabel = form.deliveryOption === 'delivery'
     ? `${DELIVERY_AREAS[form.deliveryArea]}: ${form.areaDetails.trim()}`
     : '';
-
-  // คณะต่าง ๆ ส่งช่วงเที่ยง ส่วนพื้นที่อื่นส่งช่วง 20:00–21:00 เท่านั้น
-  const deliveryTimeLabel = form.deliveryArea === 'other_faculty'
-    ? '12:00–13:00'
-    : '20:00–21:00';
-
+  const deliveryTimeLabel = form.deliveryArea === 'other_faculty' ? '12:00–13:00' : '20:00–21:00';
   const deliveryFeeLabel = deliveryFee === 0 ? 'ส่งฟรี' : '+5 บาท';
   const deliverySummary = form.deliveryOption === 'fine_arts'
     ? 'รับที่คณะวิจิตรศิลป์ • 12:00–13:00'
@@ -262,6 +269,15 @@ export default function App() {
     qrPayload = '';
   }
 
+  const invalidateCoupon = (message = '') => {
+    setCoupon((current) => ({
+      state: 'idle',
+      code: '',
+      discount: 0,
+      message: current.state === 'valid' ? message : '',
+    }));
+  };
+
   const updateField = (event) => {
     const { name, value } = event.target;
     setForm((current) => ({
@@ -269,10 +285,69 @@ export default function App() {
       [name]: name === 'phone' ? value.replace(/\D/g, '') : value,
       ...(name === 'deliveryArea' ? { areaDetails: '' } : {}),
     }));
+
+    if (['name', 'phone', 'social'].includes(name) && coupon.state === 'valid') {
+      invalidateCoupon('ข้อมูลผู้สั่งเปลี่ยน กรุณากดใช้คูปองอีกครั้ง');
+    }
   };
 
   const updateQty = (id, delta) => {
     setForm((current) => ({ ...current, [id]: Math.max(0, current[id] + delta) }));
+  };
+
+  const applyCoupon = async () => {
+    const code = normalizeCouponCode(couponInput);
+    if (!code) {
+      setCoupon({ state: 'idle', code: '', discount: 0, message: 'กรุณากรอกรหัสคูปอง' });
+      return;
+    }
+    if (!form.name.trim() || !form.phone.trim() || !form.social.trim()) {
+      setCoupon({ state: 'invalid', code: '', discount: 0, message: 'กรุณากรอกชื่อ เบอร์โทร และช่องทางติดต่อก่อนใช้คูปอง' });
+      return;
+    }
+    if (!settings.backendUrl.trim()) {
+      setCoupon({ state: 'invalid', code: '', discount: 0, message: 'ไม่พบ Backend URL กรุณาตรวจการตั้งค่า' });
+      return;
+    }
+
+    setCouponApplying(true);
+    setCoupon({ state: 'checking', code, discount: 0, message: 'กำลังตรวจสอบสิทธิ์คูปอง…' });
+
+    try {
+      const response = await fetch(settings.backendUrl.trim(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'validateCoupon',
+          couponCode: code,
+          name: form.name.trim(),
+          phone: form.phone.trim(),
+          contact: form.social.trim(),
+        }),
+      });
+      const result = await response.json();
+      if (!result.ok || !result.eligible) {
+        setCoupon({
+          state: 'invalid',
+          code: '',
+          discount: 0,
+          message: result.message || result.error || 'ไม่สามารถใช้คูปองนี้ได้',
+        });
+        return;
+      }
+
+      setCouponInput(code);
+      setCoupon({
+        state: 'valid',
+        code,
+        discount: Number(result.discount || 0),
+        message: result.message || `ใช้คูปองสำเร็จ ลด ${Number(result.discount || 0)} บาท`,
+      });
+    } catch (error) {
+      setCoupon({ state: 'invalid', code: '', discount: 0, message: `ตรวจคูปองไม่สำเร็จ: ${error.message}` });
+    } finally {
+      setCouponApplying(false);
+    }
   };
 
   const openCheckout = (event) => {
@@ -286,6 +361,9 @@ export default function App() {
     if (totalItems < 1) return setStatus('กรุณาเลือกขนมอย่างน้อย 1 ชิ้น');
     if (form.deliveryOption === 'delivery' && !form.areaDetails.trim()) {
       return setStatus(`กรุณาระบุรายละเอียดจุดรับสำหรับ${DELIVERY_AREAS[form.deliveryArea]}`);
+    }
+    if (normalizeCouponCode(couponInput) && (coupon.state !== 'valid' || coupon.code !== normalizeCouponCode(couponInput))) {
+      return setStatus('กรุณากดใช้คูปองและรอระบบยืนยันสิทธิ์ก่อนชำระเงิน');
     }
 
     setStatus('');
@@ -339,10 +417,7 @@ export default function App() {
         return;
       }
 
-      setSlipCheck({
-        state: 'valid',
-        message: `ตรวจพบยอด ${total.toLocaleString('th-TH')} บาท ตรงกับออเดอร์`,
-      });
+      setSlipCheck({ state: 'valid', message: `ตรวจพบยอด ${total.toLocaleString('th-TH')} บาท ตรงกับออเดอร์` });
       setProcessStage('sending');
       setStatus('กำลังบันทึกออเดอร์…');
 
@@ -359,10 +434,12 @@ export default function App() {
         thaiTeaQty: form.thaiTeaQty,
         strawberryQty: form.strawberryQty,
         blueberryQty: form.blueberryQty,
+        deliveryMode: form.deliveryOption,
         deliveryOption: deliverySummary,
         deliveryArea: deliveryAreaLabel,
         deliveryTime: deliveryTimeLabel,
         customAddress: deliveryDetails,
+        couponCode: coupon.code,
       };
       const payload = {
         action: 'submitOrder',
@@ -379,12 +456,16 @@ export default function App() {
           strawberry: form.strawberryQty,
           blueberry: form.blueberryQty,
         },
+        deliveryMode: form.deliveryOption,
         delivery: deliverySummary,
         deliveryArea: deliveryAreaLabel,
         deliveryTime: deliveryTimeLabel,
         otherDelivery: deliveryDetails,
         subtotal,
         deliveryFee,
+        couponCode: coupon.code,
+        couponDiscount,
+        totalBeforeDiscount,
         total,
         totalCost: total,
         paymentStatus: 'ตรวจยอดตรงกับออเดอร์',
@@ -419,9 +500,11 @@ export default function App() {
           strawberryQty: form.strawberryQty,
           blueberryQty: form.blueberryQty,
         },
-        subtotal,
-        deliveryFee,
-        total,
+        subtotal: Number(result.subtotal ?? subtotal),
+        deliveryFee: Number(result.deliveryFee ?? deliveryFee),
+        couponCode: result.couponCode || coupon.code,
+        couponDiscount: Number(result.couponDiscount ?? couponDiscount),
+        total: Number(result.total ?? total),
         deliverySummary,
       });
       setStatus('');
@@ -463,6 +546,15 @@ export default function App() {
     background: '#fff9f2',
     textAlign: 'left',
   };
+
+  const priceSummary = (
+    <div style={{ display: 'grid', gap: '7px', width: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}><span>ยอดสินค้า</span><span>{subtotal.toLocaleString('th-TH')} บาท</span></div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}><span>ค่าจัดส่ง</span><span>{deliveryFee === 0 ? 'ฟรี' : `${deliveryFee} บาท`}</span></div>
+      {couponDiscount > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', color: '#327a5d' }}><span>ส่วนลดคูปอง</span><span>−{couponDiscount.toLocaleString('th-TH')} บาท</span></div>}
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', paddingTop: '10px', borderTop: '1px solid #eadaca', fontWeight: 700 }}><span>ยอดรวม</span><strong style={{ fontSize: '27px' }}>{total.toLocaleString('th-TH')} บาท</strong></div>
+    </div>
+  );
 
   return (
     <div className="app-shell">
@@ -508,6 +600,28 @@ export default function App() {
             </section>
 
             <section className="card">
+              <h2><Tag size={20} style={{ verticalAlign: 'middle', marginRight: '7px' }} />คูปองส่วนลด</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '9px', alignItems: 'end' }}>
+                <label style={{ margin: 0 }}>รหัสคูปอง
+                  <input
+                    value={couponInput}
+                    onChange={(event) => {
+                      setCouponInput(event.target.value);
+                      setCoupon({ state: 'idle', code: '', discount: 0, message: '' });
+                    }}
+                    placeholder="กรอกรหัสคูปอง"
+                    autoCapitalize="none"
+                  />
+                </label>
+                <button className="primary-button" type="button" onClick={applyCoupon} disabled={couponApplying} style={{ width: 'auto', minWidth: '92px' }}>
+                  {couponApplying ? 'กำลังตรวจ…' : 'ใช้คูปอง'}
+                </button>
+              </div>
+              {coupon.message && <p className={`status ${coupon.state === 'valid' ? 'success' : coupon.state === 'checking' ? 'checking' : 'error'}`} style={{ marginBottom: 0 }}>{coupon.message}</p>}
+              <small style={{ display: 'block', marginTop: '10px', color: '#765', lineHeight: 1.6 }}>ระบบตรวจการใช้ซ้ำจากชื่อ เบอร์โทร หรือช่องทางติดต่อ โดยตรวจจากประวัติออเดอร์ใน Google Sheet</small>
+            </section>
+
+            <section className="card">
               <h2>วิธีรับของ</h2>
               <label className="radio">
                 <input type="radio" name="deliveryOption" value="fine_arts" checked={form.deliveryOption === 'fine_arts'} onChange={updateField} />
@@ -529,14 +643,7 @@ export default function App() {
                       {label}
                     </label>
                   ))}
-                  <input
-                    name="areaDetails"
-                    value={form.areaDetails}
-                    onChange={updateField}
-                    placeholder={DELIVERY_AREA_PLACEHOLDERS[form.deliveryArea]}
-                    required
-                  />
-
+                  <input name="areaDetails" value={form.areaDetails} onChange={updateField} placeholder={DELIVERY_AREA_PLACEHOLDERS[form.deliveryArea]} required />
                   <div style={{ marginTop: '16px', padding: '12px', borderRadius: '12px', background: '#fff3dc', lineHeight: 1.6 }}>
                     <strong>เวลาจัดส่ง: {deliveryTimeLabel}</strong><br />
                     <small>{form.deliveryArea === 'other_faculty' ? 'คณะต่าง ๆ จัดส่งช่วง 12:00–13:00' : 'หลังมอ หน้ามอ และสวนดอก จัดส่งช่วง 20:00–21:00 เท่านั้น'}</small>
@@ -545,11 +652,7 @@ export default function App() {
               )}
             </section>
 
-            <section className="card total-card">
-              <span>ยอดรวม</span>
-              <strong>{total.toLocaleString('th-TH')} บาท</strong>
-            </section>
-            {form.deliveryOption === 'delivery' && <p className="free-note">ค่าจัดส่ง: {deliveryFee === 0 ? 'ฟรี' : '5 บาท'}</p>}
+            <section className="card">{priceSummary}</section>
             {status && <p className="status error">{status}</p>}
             <button className="primary-button" type="submit"><ShoppingBag size={20} /> ดำเนินการชำระเงิน</button>
           </form>
@@ -558,8 +661,9 @@ export default function App() {
         {stage === 'checkout' && (
           <section className="card checkout-card">
             <h2>ชำระเงิน</h2>
-            <div className="total-row"><span>ยอดรวม</span><strong>{total.toLocaleString('th-TH')} บาท</strong></div>
-            <p style={{ margin: '8px 0', color: '#765' }}>{deliverySummary}</p>
+            <div style={{ textAlign: 'left' }}>{priceSummary}</div>
+            <p style={{ margin: '12px 0 8px', color: '#765' }}>{deliverySummary}</p>
+            {couponDiscount > 0 && <p className="status success" style={{ margin: '8px 0' }}>ใช้คูปอง {coupon.code} ลด {couponDiscount} บาท</p>}
             {qrPayload ? <div className="qr-wrap"><QRCode value={qrPayload} size={220} /></div> : <p className="status error">ไม่สามารถสร้าง QR ได้</p>}
             <p className="qr-caption">สแกน QR เพื่อชำระยอดตามออเดอร์</p>
             <label className="upload-box" htmlFor="slip"><Upload size={30} /><span>{slip ? 'เปลี่ยนรูปสลิป' : 'แนบสลิปโอนเงิน'}</span></label>
