@@ -4,7 +4,43 @@ const CONFIG = {
   SHEET_NAME: 'Orders',
   SPREADSHEET_NAME: 'Bread Clip Orders',
   SLIP_FOLDER_NAME: 'Bread Clip Slips',
+  TIME_ZONE: 'Asia/Bangkok',
 };
+
+const PRODUCT_PRICES = {
+  original: 89,
+  thaiTea: 89,
+  strawberry: 35,
+  blueberry: 35,
+};
+
+const COUPONS = {
+  kittiphotlnwza67: { discount: 10, cooldownHours: 24 },
+  kittiphotandfriend: { discount: 20, cooldownHours: 144 },
+};
+
+const ORDER_HEADERS = [
+  'Order ID',
+  'Created At',
+  'Customer Name',
+  'Phone',
+  'Contact',
+  'Tiramisu Original',
+  'Tiramisu Thai Tea',
+  'Cheese Pie Strawberry',
+  'Cheese Pie Blueberry',
+  'Delivery',
+  'Other Delivery',
+  'Subtotal',
+  'Delivery Fee',
+  'Total',
+  'Payment Status',
+  'Slip URL',
+  'Raw Payload',
+  'Coupon Code',
+  'Coupon Discount',
+  'Total Before Discount',
+];
 
 function doGet() {
   try {
@@ -24,10 +60,49 @@ function doGet() {
 function doPost(event) {
   try {
     const payload = parsePayload_(event);
-    if (payload.action && payload.action !== 'submitOrder') throw new Error('Unsupported action.');
+    const action = String(payload.action || 'submitOrder');
 
+    if (action === 'validateCoupon') {
+      return json_(handleCouponValidation_(payload));
+    }
+
+    if (action !== 'submitOrder') throw new Error('Unsupported action.');
+    return json_(handleSubmitOrder_(payload));
+  } catch (error) {
+    console.error(error);
+    return json_({
+      ok: false,
+      status: 'error',
+      error: error.message || String(error),
+      message: error.message || String(error),
+    });
+  }
+}
+
+function handleCouponValidation_(payload) {
+  const customer = extractCustomer_(payload);
+  if (!customer.name || !customer.phone || !customer.contact) {
+    throw new Error('กรุณากรอกชื่อ เบอร์โทร และช่องทางติดต่อก่อนใช้คูปอง');
+  }
+
+  const couponCode = normalizeCouponCode_(payload.couponCode);
+  if (!couponCode) {
+    return { ok: true, status: 'success', eligible: true, couponCode: '', discount: 0 };
+  }
+
+  const result = validateCoupon_(getOrderSheet_(), customer, couponCode, new Date());
+  return Object.assign({ ok: true, status: 'success' }, result);
+}
+
+function handleSubmitOrder_(payload) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
     const customer = extractCustomer_(payload);
-    if (!customer.name || !customer.phone || !customer.contact) throw new Error('Missing customer details.');
+    if (!customer.name || !customer.phone || !customer.contact) {
+      throw new Error('Missing customer details.');
+    }
 
     const items = extractItems_(payload);
     const totalItems = Object.keys(items).reduce(function (sum, key) {
@@ -39,15 +114,44 @@ function doPost(event) {
     const sheet = getOrderSheet_();
     const existingRow = findOrderRow_(sheet, orderId);
     if (existingRow > 0) {
-      return json_({ ok: true, status: 'success', duplicate: true, orderId: orderId });
+      return { ok: true, status: 'success', duplicate: true, orderId: orderId };
+    }
+
+    const subtotal = calculateSubtotal_(items);
+    const deliveryMode = String(
+      payload.deliveryMode ||
+      (payload.orderData && payload.orderData.deliveryMode) ||
+      ''
+    );
+    const deliveryText = String(
+      payload.delivery ||
+      payload.deliveryOption ||
+      (payload.orderData && payload.orderData.deliveryOption) ||
+      ''
+    );
+    const isDelivery = deliveryMode === 'delivery' || deliveryText.indexOf('จัดส่ง') === 0;
+    const deliveryFee = isDelivery && subtotal < 100 ? 5 : 0;
+
+    const couponCode = normalizeCouponCode_(payload.couponCode || (payload.orderData && payload.orderData.couponCode));
+    const couponResult = validateCoupon_(sheet, customer, couponCode, new Date());
+    if (!couponResult.eligible) throw new Error(couponResult.message);
+
+    const couponDiscount = Number(couponResult.discount || 0);
+    const totalBeforeDiscount = subtotal + deliveryFee;
+    const total = Math.max(0, totalBeforeDiscount - couponDiscount);
+    const clientTotal = Number(payload.total != null ? payload.total : payload.totalCost);
+
+    if (!Number.isFinite(clientTotal) || Math.abs(clientTotal - total) > 0.01) {
+      throw new Error('ยอดรวมไม่ตรงกับราคาที่ระบบคำนวณ กรุณากลับไปคำนวณใหม่');
     }
 
     const slipUrl = saveSlip_(payload, orderId, customer.name);
-    const delivery = String(payload.delivery || payload.deliveryOption || (payload.orderData && payload.orderData.deliveryOption) || '');
-    const otherDelivery = String(payload.otherDelivery || payload.customAddress || (payload.orderData && payload.orderData.customAddress) || '');
-    const subtotal = Number(payload.subtotal || 0);
-    const deliveryFee = Number(payload.deliveryFee || 0);
-    const total = Number(payload.total || payload.totalCost || 0);
+    const otherDelivery = String(
+      payload.otherDelivery ||
+      payload.customAddress ||
+      (payload.orderData && payload.orderData.customAddress) ||
+      ''
+    );
     const paymentStatus = String(payload.paymentStatus || 'รอตรวจสอบ');
 
     sheet.appendRow([
@@ -60,7 +164,7 @@ function doPost(event) {
       Number(items.thaiTea || 0),
       Number(items.strawberry || 0),
       Number(items.blueberry || 0),
-      delivery,
+      deliveryText,
       otherDelivery,
       subtotal,
       deliveryFee,
@@ -68,17 +172,24 @@ function doPost(event) {
       paymentStatus,
       slipUrl,
       JSON.stringify(payload),
+      couponCode,
+      couponDiscount,
+      totalBeforeDiscount,
     ]);
 
-    return json_({ ok: true, status: 'success', orderId: orderId, slipUrl: slipUrl });
-  } catch (error) {
-    console.error(error);
-    return json_({
-      ok: false,
-      status: 'error',
-      error: error.message || String(error),
-      message: error.message || String(error),
-    });
+    return {
+      ok: true,
+      status: 'success',
+      orderId: orderId,
+      slipUrl: slipUrl,
+      couponCode: couponCode,
+      couponDiscount: couponDiscount,
+      subtotal: subtotal,
+      deliveryFee: deliveryFee,
+      total: total,
+    };
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -121,10 +232,112 @@ function extractItems_(payload) {
   const items = payload.items || {};
   const orderData = payload.orderData || {};
   return {
-    original: Number(items.original != null ? items.original : orderData.originalQty || 0),
-    thaiTea: Number(items.thaiTea != null ? items.thaiTea : orderData.thaiTeaQty || 0),
-    strawberry: Number(items.strawberry != null ? items.strawberry : orderData.strawberryQty || 0),
-    blueberry: Number(items.blueberry != null ? items.blueberry : orderData.blueberryQty || 0),
+    original: sanitizeQuantity_(items.original != null ? items.original : orderData.originalQty),
+    thaiTea: sanitizeQuantity_(items.thaiTea != null ? items.thaiTea : orderData.thaiTeaQty),
+    strawberry: sanitizeQuantity_(items.strawberry != null ? items.strawberry : orderData.strawberryQty),
+    blueberry: sanitizeQuantity_(items.blueberry != null ? items.blueberry : orderData.blueberryQty),
+  };
+}
+
+function sanitizeQuantity_(value) {
+  const quantity = Math.floor(Number(value || 0));
+  if (!Number.isFinite(quantity) || quantity < 0) throw new Error('Invalid product quantity.');
+  return quantity;
+}
+
+function calculateSubtotal_(items) {
+  return Object.keys(PRODUCT_PRICES).reduce(function (sum, key) {
+    return sum + Number(items[key] || 0) * PRODUCT_PRICES[key];
+  }, 0);
+}
+
+function normalizeCouponCode_(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeName_(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+function normalizePhone_(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeContact_(value) {
+  return String(value || '').trim().toLowerCase().replace(/^@+/, '').replace(/\s+/g, '');
+}
+
+function validateCoupon_(sheet, customer, couponCode, now) {
+  const code = normalizeCouponCode_(couponCode);
+  if (!code) {
+    return { eligible: true, couponCode: '', discount: 0, cooldownHours: 0 };
+  }
+
+  const rule = COUPONS[code];
+  if (!rule) {
+    return {
+      eligible: false,
+      couponCode: code,
+      discount: 0,
+      message: 'ไม่พบคูปองนี้ หรือคูปองไม่ถูกต้อง',
+    };
+  }
+
+  if (sheet.getLastRow() < 2) {
+    return {
+      eligible: true,
+      couponCode: code,
+      discount: rule.discount,
+      cooldownHours: rule.cooldownHours,
+      message: 'ใช้คูปองได้',
+    };
+  }
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, ORDER_HEADERS.length).getValues();
+  const normalizedCustomer = {
+    name: normalizeName_(customer.name),
+    phone: normalizePhone_(customer.phone),
+    contact: normalizeContact_(customer.contact),
+  };
+  const cooldownMs = rule.cooldownHours * 60 * 60 * 1000;
+  let latestMatchingUse = null;
+
+  values.forEach(function (row) {
+    const rowCoupon = normalizeCouponCode_(row[17]);
+    if (rowCoupon !== code) return;
+
+    const sameName = normalizedCustomer.name && normalizeName_(row[2]) === normalizedCustomer.name;
+    const samePhone = normalizedCustomer.phone && normalizePhone_(row[3]) === normalizedCustomer.phone;
+    const sameContact = normalizedCustomer.contact && normalizeContact_(row[4]) === normalizedCustomer.contact;
+    if (!sameName && !samePhone && !sameContact) return;
+
+    const usedAt = row[1] instanceof Date ? row[1] : new Date(row[1]);
+    if (isNaN(usedAt.getTime())) return;
+    if (!latestMatchingUse || usedAt.getTime() > latestMatchingUse.getTime()) latestMatchingUse = usedAt;
+  });
+
+  if (latestMatchingUse) {
+    const elapsed = now.getTime() - latestMatchingUse.getTime();
+    if (elapsed < cooldownMs) {
+      const retryAt = new Date(latestMatchingUse.getTime() + cooldownMs);
+      const retryText = Utilities.formatDate(retryAt, CONFIG.TIME_ZONE, 'dd/MM/yyyy HH:mm');
+      return {
+        eligible: false,
+        couponCode: code,
+        discount: 0,
+        cooldownHours: rule.cooldownHours,
+        retryAt: retryAt.toISOString(),
+        message: 'คูปองนี้ถูกใช้ด้วยชื่อ เบอร์โทร หรือช่องทางติดต่อนี้แล้ว ใช้ได้อีกครั้งหลัง ' + retryText + ' น.',
+      };
+    }
+  }
+
+  return {
+    eligible: true,
+    couponCode: code,
+    discount: rule.discount,
+    cooldownHours: rule.cooldownHours,
+    message: 'ใช้คูปองได้ ลด ' + rule.discount + ' บาท',
   };
 }
 
@@ -178,31 +391,9 @@ function getOrderSheet_() {
   let sheet = spreadsheet.getSheetByName(CONFIG.SHEET_NAME);
   if (!sheet) sheet = spreadsheet.insertSheet(CONFIG.SHEET_NAME);
 
-  const headers = [
-    'Order ID',
-    'Created At',
-    'Customer Name',
-    'Phone',
-    'Contact',
-    'Tiramisu Original',
-    'Tiramisu Thai Tea',
-    'Cheese Pie Strawberry',
-    'Cheese Pie Blueberry',
-    'Delivery',
-    'Other Delivery',
-    'Subtotal',
-    'Delivery Fee',
-    'Total',
-    'Payment Status',
-    'Slip URL',
-    'Raw Payload',
-  ];
-
-  if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
-    sheet.setFrozenRows(1);
-  }
+  sheet.getRange(1, 1, 1, ORDER_HEADERS.length).setValues([ORDER_HEADERS]);
+  sheet.getRange(1, 1, 1, ORDER_HEADERS.length).setFontWeight('bold');
+  sheet.setFrozenRows(1);
   return sheet;
 }
 
@@ -229,11 +420,7 @@ function findOrderRow_(sheet, orderId) {
 }
 
 function createOrderId_() {
-  const stamp = Utilities.formatDate(
-    new Date(),
-    Session.getScriptTimeZone() || 'Asia/Bangkok',
-    'yyyyMMddHHmmss',
-  );
+  const stamp = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyyMMddHHmmss');
   return 'BC-' + stamp + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
 }
 
