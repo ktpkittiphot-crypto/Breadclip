@@ -15,22 +15,18 @@ const DELIVERY_AREAS = {
   back_gate: 'หลังมอ',
   front_gate: 'หน้ามอ',
   suan_dok: 'สวนดอก',
-  other_faculty: 'คณะอื่น ๆ',
+  other_faculty: 'คณะต่าง ๆ',
 };
 
 const DELIVERY_AREA_PLACEHOLDERS = {
   back_gate: 'ระบุหอพัก ร้าน หรือจุดนัดรับบริเวณหลังมอ',
   front_gate: 'ระบุหอพัก ร้าน หรือจุดนัดรับบริเวณหน้ามอ',
-  suan_dok: 'ระบุคณะ อาคาร โรงพยาบาล หรือจุดนัดรับสวนดอก',
-  other_faculty: 'ระบุคณะ อาคาร หรือจุดนัดรับ',
-};
-
-const DELIVERY_TIMES = {
-  noon: '12:00–13:00',
-  evening: '19:00–20:00',
+  suan_dok: 'ระบุอาคาร โรงพยาบาล หรือจุดนัดรับสวนดอก',
+  other_faculty: 'ระบุชื่อคณะ อาคาร หรือจุดนัดรับ',
 };
 
 const DEFAULT_BACKEND = 'https://script.google.com/macros/s/AKfycbyJSHTGFeJOQVoMGk5lxEblPyJ080L3dWKlJ5rhQN-2vprbSF_RWQ2gOKYMG_KiATSq/exec';
+const LOCKED_PROMPTPAY_ID = '1679900640970';
 
 function BrandLogo() {
   return (
@@ -166,7 +162,7 @@ function downloadReceipt(receipt) {
     </table>
     <div class="totals">
       <div><span>ยอดสินค้า</span><span>${receipt.subtotal.toLocaleString('th-TH')} บาท</span></div>
-      <div><span>ค่าจัดส่ง</span><span>${receipt.deliveryFee.toLocaleString('th-TH')} บาท</span></div>
+      <div><span>ค่าจัดส่ง</span><span>${receipt.deliveryFee === 0 ? 'ฟรี' : `${receipt.deliveryFee.toLocaleString('th-TH')} บาท`}</span></div>
       <div class="grand"><span>ยอดชำระ</span><span>${receipt.total.toLocaleString('th-TH')} บาท</span></div>
     </div>
     <div class="note">ชำระเงินแล้ว — รอรับขนมวันจันทร์</div>
@@ -199,10 +195,9 @@ export default function App() {
     deliveryOption: 'fine_arts',
     deliveryArea: 'back_gate',
     areaDetails: '',
-    deliveryTime: 'noon',
   });
-  const [settings, setSettings] = useState({ promptpayId: '', backendUrl: DEFAULT_BACKEND });
-  const [draftSettings, setDraftSettings] = useState(settings);
+  const [settings, setSettings] = useState({ promptpayId: LOCKED_PROMPTPAY_ID, backendUrl: DEFAULT_BACKEND });
+  const [draftSettings, setDraftSettings] = useState({ promptpayId: LOCKED_PROMPTPAY_ID, backendUrl: DEFAULT_BACKEND });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [slip, setSlip] = useState(null);
   const [slipPreview, setSlipPreview] = useState('');
@@ -217,7 +212,15 @@ export default function App() {
     const saved = localStorage.getItem('breadclip_settings');
     if (saved) {
       try {
-        setSettings((current) => ({ ...current, ...JSON.parse(saved) }));
+        const parsed = JSON.parse(saved);
+        const next = {
+          ...parsed,
+          promptpayId: LOCKED_PROMPTPAY_ID,
+          backendUrl: parsed.backendUrl || DEFAULT_BACKEND,
+        };
+        setSettings(next);
+        setDraftSettings(next);
+        localStorage.setItem('breadclip_settings', JSON.stringify(next));
       } catch {
         // Ignore invalid local data.
       }
@@ -232,21 +235,29 @@ export default function App() {
     () => PRODUCTS.reduce((sum, product) => sum + form[product.id] * product.price, 0),
     [form],
   );
-  const deliveryFee = form.deliveryOption === 'delivery' ? 5 : 0;
+
+  // จัดส่งคิด 5 บาทเฉพาะยอดสินค้าต่ำกว่า 100 บาท
+  const deliveryFee = form.deliveryOption === 'delivery' && subtotal < 100 ? 5 : 0;
   const total = subtotal + deliveryFee;
   const totalItems = PRODUCTS.reduce((sum, product) => sum + form[product.id], 0);
 
   const deliveryAreaLabel = form.deliveryOption === 'delivery'
     ? `${DELIVERY_AREAS[form.deliveryArea]}: ${form.areaDetails.trim()}`
     : '';
-  const deliveryTimeLabel = DELIVERY_TIMES[form.deliveryTime];
+
+  // คณะต่าง ๆ ส่งช่วงเที่ยง ส่วนพื้นที่อื่นส่งช่วง 20:00–21:00 เท่านั้น
+  const deliveryTimeLabel = form.deliveryArea === 'other_faculty'
+    ? '12:00–13:00'
+    : '20:00–21:00';
+
+  const deliveryFeeLabel = deliveryFee === 0 ? 'ส่งฟรี' : '+5 บาท';
   const deliverySummary = form.deliveryOption === 'fine_arts'
     ? 'รับที่คณะวิจิตรศิลป์ • 12:00–13:00'
-    : `จัดส่ง ${deliveryAreaLabel} • ${deliveryTimeLabel} (+5 บาท)`;
+    : `จัดส่ง ${deliveryAreaLabel} • ${deliveryTimeLabel} (${deliveryFeeLabel})`;
 
   let qrPayload = '';
   try {
-    if (settings.promptpayId && total > 0) qrPayload = generatePayload(settings.promptpayId, total);
+    if (total > 0) qrPayload = generatePayload(LOCKED_PROMPTPAY_ID, total);
   } catch {
     qrPayload = '';
   }
@@ -275,11 +286,6 @@ export default function App() {
     if (totalItems < 1) return setStatus('กรุณาเลือกขนมอย่างน้อย 1 ชิ้น');
     if (form.deliveryOption === 'delivery' && !form.areaDetails.trim()) {
       return setStatus(`กรุณาระบุรายละเอียดจุดรับสำหรับ${DELIVERY_AREAS[form.deliveryArea]}`);
-    }
-    if (!settings.promptpayId.trim()) {
-      setDraftSettings(settings);
-      setSettingsOpen(true);
-      return setStatus('กรุณาตั้งค่าเลขพร้อมเพย์ก่อนชำระเงิน');
     }
 
     setStatus('');
@@ -433,10 +439,11 @@ export default function App() {
 
   const saveSettings = () => {
     const next = {
-      promptpayId: draftSettings.promptpayId.trim(),
-      backendUrl: draftSettings.backendUrl.trim(),
+      promptpayId: LOCKED_PROMPTPAY_ID,
+      backendUrl: draftSettings.backendUrl.trim() || DEFAULT_BACKEND,
     };
     setSettings(next);
+    setDraftSettings(next);
     localStorage.setItem('breadclip_settings', JSON.stringify(next));
     setSettingsOpen(false);
     setStatus('บันทึกการตั้งค่าแล้ว');
@@ -510,7 +517,7 @@ export default function App() {
               <label className="radio">
                 <input type="radio" name="deliveryOption" value="delivery" checked={form.deliveryOption === 'delivery'} onChange={updateField} />
                 จัดส่งในพื้นที่ มช.
-                <span><strong>+5 บาท</strong></span>
+                <span><strong>{subtotal >= 100 ? 'ส่งฟรี' : '+5 บาท'}</strong> • ยอดขนมตั้งแต่ 100 บาทส่งฟรี</span>
               </label>
 
               {form.deliveryOption === 'delivery' && (
@@ -530,18 +537,19 @@ export default function App() {
                     required
                   />
 
-                  <h3 style={{ margin: '18px 0 8px' }}>ช่วงเวลาจัดส่ง</h3>
-                  {Object.entries(DELIVERY_TIMES).map(([value, label]) => (
-                    <label className="radio" key={value}>
-                      <input type="radio" name="deliveryTime" value={value} checked={form.deliveryTime === value} onChange={updateField} />
-                      {label}
-                    </label>
-                  ))}
+                  <div style={{ marginTop: '16px', padding: '12px', borderRadius: '12px', background: '#fff3dc', lineHeight: 1.6 }}>
+                    <strong>เวลาจัดส่ง: {deliveryTimeLabel}</strong><br />
+                    <small>{form.deliveryArea === 'other_faculty' ? 'คณะต่าง ๆ จัดส่งช่วง 12:00–13:00' : 'หลังมอ หน้ามอ และสวนดอก จัดส่งช่วง 20:00–21:00 เท่านั้น'}</small>
+                  </div>
                 </div>
               )}
             </section>
 
-            <section className="card total-card"><span>ยอดรวม</span><strong>{total.toLocaleString('th-TH')} บาท</strong></section>
+            <section className="card total-card">
+              <span>ยอดรวม</span>
+              <strong>{total.toLocaleString('th-TH')} บาท</strong>
+            </section>
+            {form.deliveryOption === 'delivery' && <p className="free-note">ค่าจัดส่ง: {deliveryFee === 0 ? 'ฟรี' : '5 บาท'}</p>}
             {status && <p className="status error">{status}</p>}
             <button className="primary-button" type="submit"><ShoppingBag size={20} /> ดำเนินการชำระเงิน</button>
           </form>
@@ -552,7 +560,7 @@ export default function App() {
             <h2>ชำระเงิน</h2>
             <div className="total-row"><span>ยอดรวม</span><strong>{total.toLocaleString('th-TH')} บาท</strong></div>
             <p style={{ margin: '8px 0', color: '#765' }}>{deliverySummary}</p>
-            {qrPayload ? <div className="qr-wrap"><QRCode value={qrPayload} size={220} /></div> : <p className="status error">ไม่สามารถสร้าง QR ได้ กรุณาตรวจเลขพร้อมเพย์ในการตั้งค่า</p>}
+            {qrPayload ? <div className="qr-wrap"><QRCode value={qrPayload} size={220} /></div> : <p className="status error">ไม่สามารถสร้าง QR ได้</p>}
             <p className="qr-caption">สแกน QR เพื่อชำระยอดตามออเดอร์</p>
             <label className="upload-box" htmlFor="slip"><Upload size={30} /><span>{slip ? 'เปลี่ยนรูปสลิป' : 'แนบสลิปโอนเงิน'}</span></label>
             <input id="slip" className="hidden-input" type="file" accept="image/*" onChange={chooseSlip} />
@@ -583,8 +591,8 @@ export default function App() {
           <div className="modal-card">
             <button className="icon-button modal-close" onClick={() => setSettingsOpen(false)} aria-label="ปิด"><X /></button>
             <h2>ตั้งค่าร้าน</h2>
-            <label>เลขพร้อมเพย์<input value={draftSettings.promptpayId} onChange={(event) => setDraftSettings({ ...draftSettings, promptpayId: event.target.value })} placeholder="เบอร์โทรหรือเลขบัตรประชาชน" /></label>
-            <label>Google Apps Script Web App URL<input value={draftSettings.backendUrl} onChange={(event) => setDraftSettings({ ...draftSettings, backendUrl: event.target.value })} placeholder="https://script.google.com/macros/s/.../exec" /></label>
+            <label>เลขพร้อมเพย์<input value={LOCKED_PROMPTPAY_ID} readOnly disabled /></label>
+            <label>Google Apps Script Web App URL<input value={draftSettings.backendUrl} onChange={(event) => setDraftSettings({ ...draftSettings, backendUrl: event.target.value, promptpayId: LOCKED_PROMPTPAY_ID })} placeholder="https://script.google.com/macros/s/.../exec" /></label>
             <button className="primary-button" onClick={saveSettings}>บันทึกการตั้งค่า</button>
           </div>
         </div>
