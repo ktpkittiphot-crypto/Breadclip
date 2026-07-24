@@ -1,16 +1,33 @@
-# React + Vite
+# Bread Clip Pre-order
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+เว็บแอปพรีออเดอร์ขนมสำหรับนักศึกษาเชียงใหม่ สร้างด้วย React + Vite
 
-Currently, two official plugins are available:
+## ฟังก์ชัน
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- เลือก Tiramisu และ Cheese Pie พร้อมคำนวณยอดแบบเรียลไทม์
+- ส่งฟรีเมื่อยอดสินค้า 100 บาทขึ้นไป
+- สร้าง PromptPay QR ตามยอดอัตโนมัติ
+- แนบสลิปและส่งออเดอร์ไป Google Apps Script
+- บันทึกข้อมูลลง Google Sheet และสลิปลง Google Drive
+- ตั้งค่าเลขพร้อมเพย์และ Backend URL ผ่านไอคอนเฟือง
 
-## React Compiler
+## เปิดใช้งาน Google Apps Script
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. เปิด Google Sheet > Extensions > Apps Script
+2. คัดลอก `gas_script.js` ไปวางแทนโค้ดเดิม
+3. Deploy > New deployment > Web app
+4. Execute as: Me และ Who has access: Anyone
+5. นำ Web App URL ไปใส่ในหน้า Settings ของเว็บ
 
-## Expanding the Oxlint configuration
+หลังแก้ Apps Script ต้อง Deploy เป็นเวอร์ชันใหม่ทุกครั้ง
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Development
+
+```bash
+npm install
+npm run dev
+```
+
+## GitHub Pages
+
+Workflow ใน `.github/workflows/deploy-pages.yml` จะ build และ deploy เมื่อ push เข้า `main`
