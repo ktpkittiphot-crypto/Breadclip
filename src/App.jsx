@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'react-qr-code';
 import Tesseract from 'tesseract.js';
-import { CheckCircle, Settings, ShoppingBag, Upload, X } from 'lucide-react';
+import { CheckCircle, Download, Settings, ShoppingBag, Upload, X } from 'lucide-react';
 import { generatePayload } from './utils/promptpay';
 
 const PRODUCTS = [
@@ -88,6 +88,104 @@ function hasMatchingAmount(text, expectedAmount) {
   };
 }
 
+function isPreorderOpenNow() {
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    timeZone: 'Asia/Bangkok',
+  }).format(new Date());
+  return weekday !== 'Sat' && weekday !== 'Sun';
+}
+
+function formatBangkokDate(date = new Date()) {
+  return new Intl.DateTimeFormat('th-TH', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'Asia/Bangkok',
+  }).format(date);
+}
+
+function escapeHtml(value) {
+  const replacements = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return String(value ?? '').replace(/[&<>"']/g, (character) => replacements[character]);
+}
+
+function downloadReceipt(receipt) {
+  if (!receipt) return;
+
+  const itemRows = PRODUCTS
+    .filter((product) => Number(receipt.items[product.id] || 0) > 0)
+    .map((product) => {
+      const quantity = Number(receipt.items[product.id] || 0);
+      const lineTotal = quantity * product.price;
+      return `
+        <tr>
+          <td>${escapeHtml(product.label)}</td>
+          <td class="number">${quantity}</td>
+          <td class="number">${lineTotal.toLocaleString('th-TH')} บาท</td>
+        </tr>`;
+    })
+    .join('');
+
+  const html = `<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ใบเสร็จ Bread Clip ${escapeHtml(receipt.orderId)}</title>
+  <style>
+    body{font-family:Arial,'Noto Sans Thai',sans-serif;color:#2b1b14;margin:0;padding:24px;background:#f7f3ee}
+    .receipt{max-width:620px;margin:auto;background:#fff;border:1px solid #ddd;padding:28px}
+    h1{margin:0 0 4px;font-size:28px}h2{margin:0 0 24px;font-size:18px;font-weight:normal}
+    .meta{line-height:1.7;margin-bottom:20px}.note{padding:14px;background:#fff3dc;border:1px solid #ead1aa;margin:20px 0;font-weight:bold}
+    table{width:100%;border-collapse:collapse;margin:16px 0}th,td{padding:10px 6px;border-bottom:1px solid #ddd;text-align:left}.number{text-align:right}
+    .totals{margin-left:auto;width:min(100%,330px)}.totals div{display:flex;justify-content:space-between;padding:5px 0}.grand{font-size:20px;font-weight:bold;border-top:2px solid #2b1b14;margin-top:5px;padding-top:10px!important}
+    .footer{margin-top:28px;text-align:center;color:#666;font-size:13px}@media print{body{background:#fff;padding:0}.receipt{border:0}}
+  </style>
+</head>
+<body>
+  <main class="receipt">
+    <h1>Bread Clip</h1>
+    <h2>ใบเสร็จรับเงิน / Order Receipt</h2>
+    <div class="meta">
+      <div><strong>เลขออเดอร์:</strong> ${escapeHtml(receipt.orderId)}</div>
+      <div><strong>วันที่:</strong> ${escapeHtml(receipt.createdAt)}</div>
+      <div><strong>ลูกค้า:</strong> ${escapeHtml(receipt.name)}</div>
+      <div><strong>เบอร์โทร:</strong> ${escapeHtml(receipt.phone)}</div>
+      <div><strong>ช่องทางติดต่อ:</strong> ${escapeHtml(receipt.contact)}</div>
+      <div><strong>วิธีรับของ:</strong> ${escapeHtml(receipt.deliverySummary)}</div>
+    </div>
+    <table>
+      <thead><tr><th>สินค้า</th><th class="number">จำนวน</th><th class="number">ราคา</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+    <div class="totals">
+      <div><span>ยอดสินค้า</span><span>${receipt.subtotal.toLocaleString('th-TH')} บาท</span></div>
+      <div><span>ค่าจัดส่ง</span><span>${receipt.deliveryFee.toLocaleString('th-TH')} บาท</span></div>
+      <div class="grand"><span>ยอดชำระ</span><span>${receipt.total.toLocaleString('th-TH')} บาท</span></div>
+    </div>
+    <div class="note">ชำระเงินแล้ว — รอรับขนมวันจันทร์</div>
+    <div class="footer">ขอบคุณที่อุดหนุน Bread Clip • Only at CMU</div>
+  </main>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `BreadClip-Receipt-${receipt.orderId || 'order'}.html`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function App() {
   const [stage, setStage] = useState('form');
   const [form, setForm] = useState({
@@ -112,6 +210,8 @@ export default function App() {
   const [slipCheck, setSlipCheck] = useState({ state: 'idle', message: '' });
   const [processStage, setProcessStage] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [receipt, setReceipt] = useState(null);
+  const [isPreorderOpen, setIsPreorderOpen] = useState(() => isPreorderOpenNow());
 
   useEffect(() => {
     const saved = localStorage.getItem('breadclip_settings');
@@ -122,6 +222,10 @@ export default function App() {
         // Ignore invalid local data.
       }
     }
+
+    const updateOpenStatus = () => setIsPreorderOpen(isPreorderOpenNow());
+    const timer = window.setInterval(updateOpenStatus, 60 * 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const subtotal = useMemo(
@@ -162,6 +266,9 @@ export default function App() {
 
   const openCheckout = (event) => {
     event.preventDefault();
+    if (!isPreorderOpen) {
+      return setStatus('ขออภัยรอรอบถัดไปนะครับ <3 รอบถัดไปเปิดพรีออเดอร์ จันทร์ ถึง ศุกร์');
+    }
     if (!form.name.trim() || !form.phone.trim() || !form.social.trim()) {
       return setStatus('กรุณากรอกข้อมูลผู้สั่งให้ครบ');
     }
@@ -192,6 +299,10 @@ export default function App() {
   };
 
   const submitOrder = async () => {
+    if (!isPreorderOpen) {
+      setStage('form');
+      return setStatus('ขออภัยรอรอบถัดไปนะครับ <3 รอบถัดไปเปิดพรีออเดอร์ จันทร์ ถึง ศุกร์');
+    }
     if (!slip) return setStatus('กรุณาแนบสลิปโอนเงิน');
     if (!settings.backendUrl.trim()) return setStatus('กรุณาตั้งค่า Google Apps Script URL');
 
@@ -289,6 +400,24 @@ export default function App() {
       if (!(result.ok || result.status === 'success')) {
         throw new Error(result.error || result.message || 'บันทึกออเดอร์ไม่สำเร็จ');
       }
+
+      setReceipt({
+        orderId: result.orderId || `BC-${Date.now()}`,
+        createdAt: formatBangkokDate(),
+        name: orderData.name,
+        phone: orderData.phone,
+        contact: orderData.contact,
+        items: {
+          originalQty: form.originalQty,
+          thaiTeaQty: form.thaiTeaQty,
+          strawberryQty: form.strawberryQty,
+          blueberryQty: form.blueberryQty,
+        },
+        subtotal,
+        deliveryFee,
+        total,
+        deliverySummary,
+      });
       setStatus('');
       setStage('success');
     } catch (error) {
@@ -341,7 +470,18 @@ export default function App() {
       </header>
 
       <main>
-        {stage === 'form' && (
+        {stage === 'form' && !isPreorderOpen && (
+          <section className="card" style={{ textAlign: 'center', padding: '36px 22px' }}>
+            <div style={{ fontSize: '44px', marginBottom: '12px' }}>🍰</div>
+            <h2>ปิดรับพรีออเดอร์ชั่วคราว</h2>
+            <p style={{ fontSize: '18px', lineHeight: 1.8, marginBottom: 0 }}>
+              ขออภัยรอรอบถัดไปนะครับ &lt;3<br />
+              รอบถัดไปเปิดพรีออเดอร์ จันทร์ ถึง ศุกร์
+            </p>
+          </section>
+        )}
+
+        {stage === 'form' && isPreorderOpen && (
           <form onSubmit={openCheckout}>
             <section className="card">
               <h2>ข้อมูลผู้สั่ง</h2>
@@ -424,7 +564,17 @@ export default function App() {
         )}
 
         {stage === 'success' && (
-          <section className="card success-card"><CheckCircle size={68} /><h2>สั่งซื้อสำเร็จ!</h2><p>ตรวจพบยอดเงินตรงกับออเดอร์ และบันทึกข้อมูลพร้อมสลิปเรียบร้อยแล้ว</p><button className="primary-button" onClick={() => window.location.reload()}>กลับสู่หน้าหลัก</button></section>
+          <section className="card success-card">
+            <CheckCircle size={68} />
+            <h2>สั่งซื้อสำเร็จ!</h2>
+            <p>ตรวจพบยอดเงินตรงกับออเดอร์ และบันทึกข้อมูลพร้อมสลิปเรียบร้อยแล้ว</p>
+            <p style={{ fontSize: '18px', fontWeight: 700, color: '#4c2f23' }}>รอรับขนมวันจันทร์นะครับ 🍰</p>
+            {receipt?.orderId && <p style={{ color: '#765' }}>เลขออเดอร์: <strong>{receipt.orderId}</strong></p>}
+            <div style={{ display: 'grid', gap: '10px', width: '100%', marginTop: '18px' }}>
+              <button className="primary-button" type="button" onClick={() => downloadReceipt(receipt)}><Download size={20} /> ดาวน์โหลดใบเสร็จ</button>
+              <button className="secondary-button" type="button" onClick={() => window.location.reload()}>กลับสู่หน้าหลัก</button>
+            </div>
+          </section>
         )}
       </main>
 
