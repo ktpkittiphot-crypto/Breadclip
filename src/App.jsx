@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'react-qr-code';
+import Tesseract from 'tesseract.js';
 import { CheckCircle, Settings, ShoppingBag, Upload, X } from 'lucide-react';
 import { generatePayload } from './utils/promptpay';
 
@@ -10,7 +11,7 @@ const PRODUCTS = [
   { id: 'blueberryQty', label: 'Cheese Pie Blueberry', price: 35 },
 ];
 
-const DEFAULT_BACKEND = 'https://script.google.com/macros/s/AKfycbwD6n28H6qnsCrOpCerm7IqccDQTFQ4z_haX7RaBEdmlqPnDIpaInzsrsS7wavgNaxu/exec';
+const DEFAULT_BACKEND = 'https://script.google.com/macros/s/AKfycbyJSHTGFeJOQVoMGk5lxEblPyJ080L3dWKlJ5rhQN-2vprbSF_RWQ2gOKYMG_KiATSq/exec';
 
 function BrandLogo() {
   return (
@@ -32,6 +33,42 @@ function fileToDataUrl(file) {
   });
 }
 
+function extractAmounts(text) {
+  const tokens = String(text || '')
+    .replace(/[Oo]/g, '0')
+    .match(/\d[\d,.]*\d|\d/g) || [];
+
+  return tokens
+    .map((token) => {
+      let normalized = token;
+
+      if (normalized.includes('.') && normalized.includes(',')) {
+        normalized = normalized.replace(/,/g, '');
+      } else if (!normalized.includes('.') && /,\d{1,2}$/.test(normalized)) {
+        normalized = normalized.replace(/,/g, '.');
+      } else {
+        normalized = normalized.replace(/,/g, '');
+      }
+
+      const firstDot = normalized.indexOf('.');
+      if (firstDot >= 0) {
+        normalized = normalized.slice(0, firstDot + 1) + normalized.slice(firstDot + 1).replace(/\./g, '');
+      }
+
+      const value = Number(normalized);
+      return Number.isFinite(value) ? value : null;
+    })
+    .filter((value) => value !== null);
+}
+
+function hasMatchingAmount(text, expectedAmount) {
+  const amounts = extractAmounts(text);
+  return {
+    matched: amounts.some((amount) => Math.abs(amount - expectedAmount) < 0.01),
+    amounts: [...new Set(amounts)].slice(0, 12),
+  };
+}
+
 export default function App() {
   const [stage, setStage] = useState('form');
   const [form, setForm] = useState({
@@ -45,6 +82,8 @@ export default function App() {
   const [slip, setSlip] = useState(null);
   const [slipPreview, setSlipPreview] = useState('');
   const [status, setStatus] = useState('');
+  const [slipCheck, setSlipCheck] = useState({ state: 'idle', message: '' });
+  const [processStage, setProcessStage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -89,6 +128,7 @@ export default function App() {
       return setStatus('กรุณาตั้งค่าเลขพร้อมเพย์ก่อนชำระเงิน');
     }
     setStatus('');
+    setSlipCheck({ state: 'idle', message: '' });
     setStage('checkout');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -96,8 +136,11 @@ export default function App() {
   const chooseSlip = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (slipPreview) URL.revokeObjectURL(slipPreview);
     setSlip(file);
     setSlipPreview(URL.createObjectURL(file));
+    setStatus('');
+    setSlipCheck({ state: 'idle', message: 'กดยืนยันเพื่อให้ระบบตรวจยอดเงินในสลิป' });
   };
 
   const submitOrder = async () => {
@@ -105,8 +148,39 @@ export default function App() {
     if (!settings.backendUrl.trim()) return setStatus('กรุณาตั้งค่า Google Apps Script URL');
 
     setSubmitting(true);
-    setStatus('กำลังส่งออเดอร์…');
+    setProcessStage('checking');
+    setStatus('');
+    setSlipCheck({ state: 'checking', message: 'กำลังอ่านตัวเลขจากสลิป…' });
+
     try {
+      const ocrResult = await Tesseract.recognize(slip, 'eng', {
+        logger: (progress) => {
+          if (progress.status === 'recognizing text') {
+            const percent = Math.round((progress.progress || 0) * 100);
+            setSlipCheck({ state: 'checking', message: `กำลังอ่านตัวเลขจากสลิป… ${percent}%` });
+          }
+        },
+      });
+
+      const amountCheck = hasMatchingAmount(ocrResult.data.text, total);
+      if (!amountCheck.matched) {
+        const detected = amountCheck.amounts.length
+          ? ` ระบบอ่านพบ: ${amountCheck.amounts.join(', ')}`
+          : ' ระบบอ่านไม่พบตัวเลขยอดเงิน';
+        setSlipCheck({
+          state: 'invalid',
+          message: `ยอดในสลิปไม่ตรงกับยอดออเดอร์ ${total.toLocaleString('th-TH')} บาท.${detected}`,
+        });
+        return;
+      }
+
+      setSlipCheck({
+        state: 'valid',
+        message: `ตรวจพบยอด ${total.toLocaleString('th-TH')} บาท ตรงกับออเดอร์`,
+      });
+      setProcessStage('sending');
+      setStatus('กำลังบันทึกออเดอร์…');
+
       const slipDataUrl = await fileToDataUrl(slip);
       const orderData = {
         name: form.name.trim(),
@@ -137,9 +211,12 @@ export default function App() {
         },
         delivery: form.deliveryOption,
         otherDelivery: form.customAddress.trim(),
+        subtotal,
+        deliveryFee,
         total,
         totalCost: total,
-        paymentStatus: 'รอตรวจสอบ',
+        paymentStatus: 'ตรวจยอดตรงกับออเดอร์',
+        slipAmountVerified: true,
         slipName: slip.name,
         filename: `slip_${Date.now()}_${orderData.name}`,
         slipType: slip.type || 'image/jpeg',
@@ -158,8 +235,10 @@ export default function App() {
       setStatus('');
       setStage('success');
     } catch (error) {
+      setSlipCheck((current) => current.state === 'valid' ? current : { state: 'invalid', message: 'ไม่สามารถอ่านยอดเงินจากสลิปนี้ได้ กรุณาใช้รูปที่คมชัดและเห็นยอดเงินครบ' });
       setStatus(`เกิดข้อผิดพลาด: ${error.message}`);
     } finally {
+      setProcessStage('');
       setSubmitting(false);
     }
   };
@@ -171,6 +250,12 @@ export default function App() {
     setSettingsOpen(false);
     setStatus('บันทึกการตั้งค่าแล้ว');
   };
+
+  const submitButtonText = processStage === 'checking'
+    ? 'กำลังตรวจยอด…'
+    : processStage === 'sending'
+      ? 'กำลังส่งออเดอร์…'
+      : 'ยืนยันการสั่งซื้อ';
 
   return (
     <div className="app-shell">
@@ -230,13 +315,14 @@ export default function App() {
             <label className="upload-box" htmlFor="slip"><Upload size={30} /><span>{slip ? 'เปลี่ยนรูปสลิป' : 'แนบสลิปโอนเงิน'}</span></label>
             <input id="slip" className="hidden-input" type="file" accept="image/*" onChange={chooseSlip} />
             {slipPreview && <img className="slip-preview" src={slipPreview} alt="ตัวอย่างสลิป" />}
+            {slipCheck.message && <p className={`status ${slipCheck.state === 'valid' ? 'success' : slipCheck.state === 'checking' ? 'checking' : 'error'}`}>{slipCheck.message}</p>}
             {status && <p className="status error">{status}</p>}
-            <div className="button-row"><button className="secondary-button" type="button" onClick={() => setStage('form')} disabled={submitting}>กลับไปแก้ไข</button><button className="primary-button" type="button" onClick={submitOrder} disabled={submitting}>{submitting ? 'กำลังส่ง…' : 'ยืนยันการสั่งซื้อ'}</button></div>
+            <div className="button-row"><button className="secondary-button" type="button" onClick={() => setStage('form')} disabled={submitting}>กลับไปแก้ไข</button><button className="primary-button" type="button" onClick={submitOrder} disabled={submitting}>{submitButtonText}</button></div>
           </section>
         )}
 
         {stage === 'success' && (
-          <section className="card success-card"><CheckCircle size={68} /><h2>สั่งซื้อสำเร็จ!</h2><p>เราได้รับข้อมูลออเดอร์และสลิปเรียบร้อยแล้ว</p><button className="primary-button" onClick={() => window.location.reload()}>กลับสู่หน้าหลัก</button></section>
+          <section className="card success-card"><CheckCircle size={68} /><h2>สั่งซื้อสำเร็จ!</h2><p>ตรวจพบยอดเงินตรงกับออเดอร์ และบันทึกข้อมูลพร้อมสลิปเรียบร้อยแล้ว</p><button className="primary-button" onClick={() => window.location.reload()}>กลับสู่หน้าหลัก</button></section>
         )}
       </main>
 
