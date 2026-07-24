@@ -18,10 +18,16 @@ const DELIVERY_AREAS = {
   other_faculty: 'คณะอื่น ๆ',
 };
 
+const DELIVERY_AREA_PLACEHOLDERS = {
+  back_gate: 'ระบุหอพัก ร้าน หรือจุดนัดรับบริเวณหลังมอ',
+  front_gate: 'ระบุหอพัก ร้าน หรือจุดนัดรับบริเวณหน้ามอ',
+  suan_dok: 'ระบุคณะ อาคาร โรงพยาบาล หรือจุดนัดรับสวนดอก',
+  other_faculty: 'ระบุคณะ อาคาร หรือจุดนัดรับ',
+};
+
 const DELIVERY_TIMES = {
   noon: '12:00–13:00',
   evening: '19:00–20:00',
-  other: 'เวลาอื่น',
 };
 
 const DEFAULT_BACKEND = 'https://script.google.com/macros/s/AKfycbyJSHTGFeJOQVoMGk5lxEblPyJ080L3dWKlJ5rhQN-2vprbSF_RWQ2gOKYMG_KiATSq/exec';
@@ -94,9 +100,8 @@ export default function App() {
     blueberryQty: 0,
     deliveryOption: 'fine_arts',
     deliveryArea: 'back_gate',
-    otherArea: '',
+    areaDetails: '',
     deliveryTime: 'noon',
-    otherTime: '',
   });
   const [settings, setSettings] = useState({ promptpayId: '', backendUrl: DEFAULT_BACKEND });
   const [draftSettings, setDraftSettings] = useState(settings);
@@ -127,12 +132,10 @@ export default function App() {
   const total = subtotal + deliveryFee;
   const totalItems = PRODUCTS.reduce((sum, product) => sum + form[product.id], 0);
 
-  const deliveryAreaLabel = form.deliveryArea === 'other_faculty'
-    ? `คณะอื่น ๆ: ${form.otherArea.trim()}`
-    : DELIVERY_AREAS[form.deliveryArea];
-  const deliveryTimeLabel = form.deliveryTime === 'other'
-    ? form.otherTime.trim()
-    : DELIVERY_TIMES[form.deliveryTime];
+  const deliveryAreaLabel = form.deliveryOption === 'delivery'
+    ? `${DELIVERY_AREAS[form.deliveryArea]}: ${form.areaDetails.trim()}`
+    : '';
+  const deliveryTimeLabel = DELIVERY_TIMES[form.deliveryTime];
   const deliverySummary = form.deliveryOption === 'fine_arts'
     ? 'รับที่คณะวิจิตรศิลป์ • 12:00–13:00'
     : `จัดส่ง ${deliveryAreaLabel} • ${deliveryTimeLabel} (+5 บาท)`;
@@ -149,6 +152,7 @@ export default function App() {
     setForm((current) => ({
       ...current,
       [name]: name === 'phone' ? value.replace(/\D/g, '') : value,
+      ...(name === 'deliveryArea' ? { areaDetails: '' } : {}),
     }));
   };
 
@@ -162,11 +166,8 @@ export default function App() {
       return setStatus('กรุณากรอกข้อมูลผู้สั่งให้ครบ');
     }
     if (totalItems < 1) return setStatus('กรุณาเลือกขนมอย่างน้อย 1 ชิ้น');
-    if (form.deliveryOption === 'delivery' && form.deliveryArea === 'other_faculty' && !form.otherArea.trim()) {
-      return setStatus('กรุณาระบุคณะหรือจุดรับของ');
-    }
-    if (form.deliveryOption === 'delivery' && form.deliveryTime === 'other' && !form.otherTime.trim()) {
-      return setStatus('กรุณาระบุเวลาที่ต้องการจัดส่ง');
+    if (form.deliveryOption === 'delivery' && !form.areaDetails.trim()) {
+      return setStatus(`กรุณาระบุรายละเอียดจุดรับสำหรับ${DELIVERY_AREAS[form.deliveryArea]}`);
     }
     if (!settings.promptpayId.trim()) {
       setDraftSettings(settings);
@@ -381,9 +382,13 @@ export default function App() {
                       {label}
                     </label>
                   ))}
-                  {form.deliveryArea === 'other_faculty' && (
-                    <input name="otherArea" value={form.otherArea} onChange={updateField} placeholder="ระบุคณะ อาคาร หรือจุดนัดรับ" required />
-                  )}
+                  <input
+                    name="areaDetails"
+                    value={form.areaDetails}
+                    onChange={updateField}
+                    placeholder={DELIVERY_AREA_PLACEHOLDERS[form.deliveryArea]}
+                    required
+                  />
 
                   <h3 style={{ margin: '18px 0 8px' }}>ช่วงเวลาจัดส่ง</h3>
                   {Object.entries(DELIVERY_TIMES).map(([value, label]) => (
@@ -392,9 +397,6 @@ export default function App() {
                       {label}
                     </label>
                   ))}
-                  {form.deliveryTime === 'other' && (
-                    <input name="otherTime" value={form.otherTime} onChange={updateField} placeholder="เช่น 14:30 หรือ 16:00–17:00" required />
-                  )}
                 </div>
               )}
             </section>
