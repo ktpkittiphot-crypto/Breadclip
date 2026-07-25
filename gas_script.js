@@ -19,8 +19,8 @@ const PRODUCT_PRICES = {
 };
 
 const COUPONS = {
-  kittiphotlnwza67: { discount: 10, cooldownHours: 24 },
-  kittiphotandfriend: { discount: 20, cooldownHours: 144 },
+  kittiphotlnwza67: 10,
+  kittiphotandfriend: 20,
 };
 
 const ORDER_HEADERS = [
@@ -54,6 +54,7 @@ function doGet(event) {
     const spreadsheet = getSpreadsheet_();
     const folder = getSlipFolder_();
     const formStatus = getFormStatus_();
+
     return json_({
       ok: true,
       service: 'Bread Clip order backend',
@@ -111,6 +112,7 @@ function getFormMode_() {
   const saved = String(
     PropertiesService.getScriptProperties().getProperty(FORM_MODE_PROPERTY) || 'auto'
   ).toLowerCase();
+
   return VALID_FORM_MODES.indexOf(saved) >= 0 ? saved : 'auto';
 }
 
@@ -131,17 +133,7 @@ function getFormStatus_() {
 }
 
 function handleCouponValidation_(payload) {
-  const customer = extractCustomer_(payload);
-  if (!customer.name || !customer.phone || !customer.contact) {
-    throw new Error('กรุณากรอกชื่อ เบอร์โทร และช่องทางติดต่อก่อนใช้คูปอง');
-  }
-
-  const couponCode = normalizeCouponCode_(payload.couponCode);
-  if (!couponCode) {
-    return { ok: true, status: 'success', eligible: true, couponCode: '', discount: 0 };
-  }
-
-  const result = validateCoupon_(getOrderSheet_(), customer, couponCode, new Date());
+  const result = validateCoupon_(payload.couponCode);
   return Object.assign({ ok: true, status: 'success' }, result);
 }
 
@@ -187,8 +179,11 @@ function handleSubmitOrder_(payload) {
     const isDelivery = deliveryMode === 'delivery' || deliveryText.indexOf('จัดส่ง') === 0;
     const deliveryFee = isDelivery && subtotal < 100 ? 5 : 0;
 
-    const couponCode = normalizeCouponCode_(payload.couponCode || (payload.orderData && payload.orderData.couponCode));
-    const couponResult = validateCoupon_(sheet, customer, couponCode, new Date());
+    const couponCode = normalizeCouponCode_(
+      payload.couponCode ||
+      (payload.orderData && payload.orderData.couponCode)
+    );
+    const couponResult = validateCoupon_(couponCode);
     if (!couponResult.eligible) throw new Error(couponResult.message);
 
     const couponDiscount = Number(couponResult.discount || 0);
@@ -252,6 +247,7 @@ function setupBreadClip() {
   const spreadsheet = getSpreadsheet_();
   const sheet = getOrderSheet_();
   const folder = getSlipFolder_();
+
   return {
     spreadsheetUrl: spreadsheet.getUrl(),
     sheetName: sheet.getName(),
@@ -262,6 +258,7 @@ function setupBreadClip() {
 
 function parsePayload_(event) {
   if (!event) return {};
+
   const raw = event.postData && event.postData.contents;
   if (raw) {
     try {
@@ -270,34 +267,70 @@ function parsePayload_(event) {
       throw new Error('Invalid JSON payload.');
     }
   }
-  if (event.parameter && event.parameter.payload) return JSON.parse(event.parameter.payload);
+
+  if (event.parameter && event.parameter.payload) {
+    return JSON.parse(event.parameter.payload);
+  }
+
   return event.parameter || {};
 }
 
 function extractCustomer_(payload) {
   const orderData = payload.orderData || {};
   const customerDetails = payload.customerDetails || {};
+
   return {
-    name: String(payload.name || payload.customerName || customerDetails.name || orderData.name || '').trim(),
-    phone: String(payload.phone || payload.customerPhone || customerDetails.phone || orderData.phone || '').trim(),
-    contact: String(payload.contact || payload.social || payload.customerContact || customerDetails.contact || orderData.contact || orderData.social || '').trim(),
+    name: String(
+      payload.name ||
+      payload.customerName ||
+      customerDetails.name ||
+      orderData.name ||
+      ''
+    ).trim(),
+    phone: String(
+      payload.phone ||
+      payload.customerPhone ||
+      customerDetails.phone ||
+      orderData.phone ||
+      ''
+    ).trim(),
+    contact: String(
+      payload.contact ||
+      payload.social ||
+      payload.customerContact ||
+      customerDetails.contact ||
+      orderData.contact ||
+      orderData.social ||
+      ''
+    ).trim(),
   };
 }
 
 function extractItems_(payload) {
   const items = payload.items || {};
   const orderData = payload.orderData || {};
+
   return {
-    original: sanitizeQuantity_(items.original != null ? items.original : orderData.originalQty),
-    thaiTea: sanitizeQuantity_(items.thaiTea != null ? items.thaiTea : orderData.thaiTeaQty),
-    strawberry: sanitizeQuantity_(items.strawberry != null ? items.strawberry : orderData.strawberryQty),
-    blueberry: sanitizeQuantity_(items.blueberry != null ? items.blueberry : orderData.blueberryQty),
+    original: sanitizeQuantity_(
+      items.original != null ? items.original : orderData.originalQty
+    ),
+    thaiTea: sanitizeQuantity_(
+      items.thaiTea != null ? items.thaiTea : orderData.thaiTeaQty
+    ),
+    strawberry: sanitizeQuantity_(
+      items.strawberry != null ? items.strawberry : orderData.strawberryQty
+    ),
+    blueberry: sanitizeQuantity_(
+      items.blueberry != null ? items.blueberry : orderData.blueberryQty
+    ),
   };
 }
 
 function sanitizeQuantity_(value) {
   const quantity = Math.floor(Number(value || 0));
-  if (!Number.isFinite(quantity) || quantity < 0) throw new Error('Invalid product quantity.');
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    throw new Error('Invalid product quantity.');
+  }
   return quantity;
 }
 
@@ -311,26 +344,20 @@ function normalizeCouponCode_(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function normalizeName_(value) {
-  return String(value || '').trim().toLowerCase().replace(/\s+/g, '');
-}
-
-function normalizePhone_(value) {
-  return String(value || '').replace(/\D/g, '');
-}
-
-function normalizeContact_(value) {
-  return String(value || '').trim().toLowerCase().replace(/^@+/, '').replace(/\s+/g, '');
-}
-
-function validateCoupon_(sheet, customer, couponCode, now) {
+function validateCoupon_(couponCode) {
   const code = normalizeCouponCode_(couponCode);
+
   if (!code) {
-    return { eligible: true, couponCode: '', discount: 0, cooldownHours: 0 };
+    return {
+      eligible: true,
+      couponCode: '',
+      discount: 0,
+      message: '',
+    };
   }
 
-  const rule = COUPONS[code];
-  if (!rule) {
+  const discount = Number(COUPONS[code] || 0);
+  if (!discount) {
     return {
       eligible: false,
       couponCode: code,
@@ -339,95 +366,55 @@ function validateCoupon_(sheet, customer, couponCode, now) {
     };
   }
 
-  if (sheet.getLastRow() < 2) {
-    return {
-      eligible: true,
-      couponCode: code,
-      discount: rule.discount,
-      cooldownHours: rule.cooldownHours,
-      message: 'ใช้คูปองได้',
-    };
-  }
-
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, ORDER_HEADERS.length).getValues();
-  const normalizedCustomer = {
-    name: normalizeName_(customer.name),
-    phone: normalizePhone_(customer.phone),
-    contact: normalizeContact_(customer.contact),
-  };
-  const cooldownMs = rule.cooldownHours * 60 * 60 * 1000;
-  let latestMatchingUse = null;
-
-  values.forEach(function (row) {
-    const rowCoupon = normalizeCouponCode_(row[17]);
-    if (rowCoupon !== code) return;
-
-    const sameName = normalizedCustomer.name && normalizeName_(row[2]) === normalizedCustomer.name;
-    const samePhone = normalizedCustomer.phone && normalizePhone_(row[3]) === normalizedCustomer.phone;
-    const sameContact = normalizedCustomer.contact && normalizeContact_(row[4]) === normalizedCustomer.contact;
-    if (!sameName && !samePhone && !sameContact) return;
-
-    const usedAt = row[1] instanceof Date ? row[1] : new Date(row[1]);
-    if (isNaN(usedAt.getTime())) return;
-    if (!latestMatchingUse || usedAt.getTime() > latestMatchingUse.getTime()) latestMatchingUse = usedAt;
-  });
-
-  if (latestMatchingUse) {
-    const elapsed = now.getTime() - latestMatchingUse.getTime();
-    if (elapsed < cooldownMs) {
-      const retryAt = new Date(latestMatchingUse.getTime() + cooldownMs);
-      const retryText = Utilities.formatDate(retryAt, CONFIG.TIME_ZONE, 'dd/MM/yyyy HH:mm');
-      return {
-        eligible: false,
-        couponCode: code,
-        discount: 0,
-        cooldownHours: rule.cooldownHours,
-        retryAt: retryAt.toISOString(),
-        message: 'คูปองนี้ถูกใช้ด้วยชื่อ เบอร์โทร หรือช่องทางติดต่อนี้แล้ว ใช้ได้อีกครั้งหลัง ' + retryText + ' น.',
-      };
-    }
-  }
-
   return {
     eligible: true,
     couponCode: code,
-    discount: rule.discount,
-    cooldownHours: rule.cooldownHours,
-    message: 'ใช้คูปองได้ ลด ' + rule.discount + ' บาท',
+    discount: discount,
+    message: 'ใช้คูปองได้ ลด ' + discount + ' บาท',
   };
 }
 
 function saveSlip_(payload, orderId, customerName) {
   const dataUrl = String(payload.slipData || '');
-  const base64 = String(payload.slipBase64 || (dataUrl.indexOf('base64,') >= 0 ? dataUrl.split('base64,')[1] : ''));
+  const base64 = String(
+    payload.slipBase64 ||
+    (dataUrl.indexOf('base64,') >= 0 ? dataUrl.split('base64,')[1] : '')
+  );
   if (!base64) throw new Error('Missing slip image.');
 
   const mimeType = String(payload.slipType || payload.mimeType || 'image/jpeg');
   const originalName = String(payload.slipName || payload.filename || 'slip.jpg');
-  const extension = originalName.indexOf('.') >= 0 ? originalName.split('.').pop() : mimeType.split('/').pop();
+  const extension = originalName.indexOf('.') >= 0
+    ? originalName.split('.').pop()
+    : mimeType.split('/').pop();
   const safeName = String(customerName || 'customer').replace(/[\\/:*?"<>|]/g, '_');
   const filename = orderId + '_' + safeName + '.' + extension;
   const bytes = Utilities.base64Decode(base64);
   const blob = Utilities.newBlob(bytes, mimeType, filename);
   const file = getSlipFolder_().createFile(blob);
+
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
   } catch (sharingError) {
     console.warn(sharingError);
   }
+
   return file.getUrl();
 }
 
 function getSpreadsheet_() {
   const properties = PropertiesService.getScriptProperties();
   const active = SpreadsheetApp.getActiveSpreadsheet();
+
   if (active) {
     saveSpreadsheetId_(properties, active.getId());
     return active;
   }
 
-  const storedId = properties.getProperty('SPREADSHEET_ID') ||
+  const storedId =
+    properties.getProperty('SPREADSHEET_ID') ||
     properties.getProperty('BREAD_CLIP_SPREADSHEET_ID');
+
   if (storedId) return SpreadsheetApp.openById(storedId);
 
   const created = SpreadsheetApp.create(CONFIG.SPREADSHEET_NAME);
@@ -455,6 +442,7 @@ function getOrderSheet_() {
 
 function getSlipFolder_() {
   const properties = PropertiesService.getScriptProperties();
+
   if (FOLDER_ID) return DriveApp.getFolderById(FOLDER_ID);
 
   const storedId = properties.getProperty('BREAD_CLIP_SLIP_FOLDER_ID');
@@ -467,11 +455,13 @@ function getSlipFolder_() {
 
 function findOrderRow_(sheet, orderId) {
   if (sheet.getLastRow() < 2) return -1;
+
   const match = sheet
     .getRange(2, 1, sheet.getLastRow() - 1, 1)
     .createTextFinder(orderId)
     .matchEntireCell(true)
     .findNext();
+
   return match ? match.getRow() : -1;
 }
 
