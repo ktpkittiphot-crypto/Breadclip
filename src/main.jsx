@@ -59,7 +59,7 @@ class AppErrorBoundary extends Component {
   }
 }
 
-async function loadGlobalFormMode() {
+async function fetchGlobalFormMode() {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), 4500)
 
@@ -72,21 +72,49 @@ async function loadGlobalFormMode() {
     })
     const result = await response.json()
 
-    if (result.ok && VALID_FORM_MODES.includes(result.formMode)) {
-      localStorage.setItem(FORM_MODE_KEY, result.formMode)
+    if (!result.ok || !VALID_FORM_MODES.includes(result.formMode)) {
+      throw new Error(result.error || result.message || 'สถานะรับออเดอร์ไม่ถูกต้อง')
     }
-  } catch (error) {
-    console.warn('Unable to load global preorder status; using the last saved mode.', error)
+
+    return result.formMode
   } finally {
     window.clearTimeout(timeout)
   }
+}
+
+async function syncGlobalFormMode({ reloadOnChange = false } = {}) {
+  try {
+    const previousMode = localStorage.getItem(FORM_MODE_KEY)
+    const nextMode = await fetchGlobalFormMode()
+    localStorage.setItem(FORM_MODE_KEY, nextMode)
+
+    if (reloadOnChange && previousMode !== nextMode) {
+      window.location.reload()
+      return true
+    }
+  } catch (error) {
+    console.warn('Unable to load global preorder status; using the last saved mode.', error)
+  }
+
+  return false
+}
+
+function startGlobalFormStatusSync() {
+  const sync = () => syncGlobalFormMode({ reloadOnChange: true })
+  const timer = window.setInterval(sync, 30 * 1000)
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sync()
+  })
+
+  window.addEventListener('beforeunload', () => window.clearInterval(timer), { once: true })
 }
 
 async function bootstrap() {
   const rootElement = document.getElementById('root')
   rootElement.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;font-family:Prompt,sans-serif;color:#4c2f23"><p>กำลังโหลดสถานะรับออเดอร์…</p></main>'
 
-  await loadGlobalFormMode()
+  await syncGlobalFormMode()
   const { default: App } = await import('./App.jsx')
 
   createRoot(rootElement).render(
@@ -96,6 +124,8 @@ async function bootstrap() {
       </AppErrorBoundary>
     </StrictMode>,
   )
+
+  startGlobalFormStatusSync()
 }
 
 bootstrap().catch((error) => {
