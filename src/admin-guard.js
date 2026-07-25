@@ -1,38 +1,73 @@
 const SETTINGS_PIN = window.atob('MTY3OTkw');
 const FORM_MODE_KEY = 'breadclip_admin_form_mode';
+const VALID_FORM_MODES = ['auto', 'open', 'closed'];
+const DEFAULT_BACKEND_URL = 'https://script.google.com/macros/s/AKfycbyJSHTGFeJOQVoMGk5lxEblPyJ080L3dWKlJ5rhQN-2vprbSF_RWQ2gOKYMG_KiATSq/exec';
 
-const getFormMode = () => {
-  const saved = localStorage.getItem(FORM_MODE_KEY);
-  return ['auto', 'open', 'closed'].includes(saved) ? saved : 'auto';
-};
-
-// Override only the weekday check used by the preorder form.
-// Other date/time formatting, including receipts, continues to use the real date.
-const nativeDateTimeFormat = Intl.DateTimeFormat;
-const activeFormMode = getFormMode();
-
-if (activeFormMode !== 'auto') {
-  const wrappedDateTimeFormat = function DateTimeFormat(locales, options = {}) {
-    const formatter = new nativeDateTimeFormat(locales, options);
-    const isBreadClipWeekdayCheck = options?.weekday === 'short' && options?.timeZone === 'Asia/Bangkok';
-
-    if (!isBreadClipWeekdayCheck) return formatter;
-
-    return new Proxy(formatter, {
-      get(target, property) {
-        if (property === 'format') {
-          return () => (activeFormMode === 'open' ? 'Mon' : 'Sat');
-        }
-        const value = Reflect.get(target, property, target);
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
-    });
-  };
-
-  wrappedDateTimeFormat.prototype = nativeDateTimeFormat.prototype;
-  wrappedDateTimeFormat.supportedLocalesOf = nativeDateTimeFormat.supportedLocalesOf.bind(nativeDateTimeFormat);
-  Intl.DateTimeFormat = wrappedDateTimeFormat;
+function getBackendUrl() {
+  try {
+    const saved = localStorage.getItem('breadclip_settings');
+    const settings = saved ? JSON.parse(saved) : {};
+    return String(settings.backendUrl || DEFAULT_BACKEND_URL).trim();
+  } catch {
+    return DEFAULT_BACKEND_URL;
+  }
 }
+
+function getFormMode() {
+  const saved = localStorage.getItem(FORM_MODE_KEY);
+  return VALID_FORM_MODES.includes(saved) ? saved : 'auto';
+}
+
+function saveFormMode(mode) {
+  const nextMode = VALID_FORM_MODES.includes(mode) ? mode : 'auto';
+  localStorage.setItem(FORM_MODE_KEY, nextMode);
+  return nextMode;
+}
+
+async function setGlobalFormMode(mode) {
+  const backendUrl = getBackendUrl();
+  const response = await fetch(backendUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({
+      action: 'setFormMode',
+      adminPin: SETTINGS_PIN,
+      formMode: mode,
+    }),
+  });
+
+  const result = await response.json();
+  if (!result.ok || !VALID_FORM_MODES.includes(result.formMode)) {
+    throw new Error(result.error || result.message || 'บันทึกสถานะรับออเดอร์ไม่สำเร็จ');
+  }
+  return result;
+}
+
+// Keep the real date formatter, but let the preorder weekday check follow Admin mode.
+// The mode is read each time, so a value loaded before React starts works immediately.
+const NativeDateTimeFormat = Intl.DateTimeFormat;
+Intl.DateTimeFormat = function BreadClipDateTimeFormat(locales, options = {}) {
+  const formatter = new NativeDateTimeFormat(locales, options);
+  const isPreorderWeekdayCheck = options?.weekday === 'short' && options?.timeZone === 'Asia/Bangkok';
+  if (!isPreorderWeekdayCheck) return formatter;
+
+  return new Proxy(formatter, {
+    get(target, property) {
+      if (property === 'format') {
+        return (...args) => {
+          const mode = getFormMode();
+          if (mode === 'open') return 'Mon';
+          if (mode === 'closed') return 'Sat';
+          return target.format(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+};
+Intl.DateTimeFormat.prototype = NativeDateTimeFormat.prototype;
+Intl.DateTimeFormat.supportedLocalesOf = NativeDateTimeFormat.supportedLocalesOf.bind(NativeDateTimeFormat);
 
 let allowNextSettingsClick = false;
 let pendingSettingsButton = null;
@@ -69,31 +104,55 @@ function injectAdminFormMode() {
   panel.id = 'breadclip-admin-form-mode';
   panel.style.cssText = 'margin:18px 0;padding:14px;border:1px solid #eadaca;border-radius:14px;background:#fff9f2;text-align:left';
   panel.innerHTML = `
-    <h3 style="margin:0 0 6px;color:#4c2f23">โหมด Admin — สถานะฟอร์ม</h3>
-    <p style="margin:0 0 12px;color:#765;font-size:13px;line-height:1.6">ใช้เปิดหรือปิดฟอร์มชั่วคราวเพื่อทดสอบบนอุปกรณ์นี้</p>
-    <label class="radio" style="display:block;margin:10px 0">
-      <input type="radio" name="breadclipFormMode" value="auto" ${currentMode === 'auto' ? 'checked' : ''}>
-      อัตโนมัติ
-      <span>เปิดจันทร์–ศุกร์ ปิดเสาร์–อาทิตย์</span>
-    </label>
+    <h3 style="margin:0 0 6px;color:#4c2f23">เปิด–ปิดรับออเดอร์</h3>
+    <p style="margin:0 0 12px;color:#765;font-size:13px;line-height:1.6">เลือกสถานะที่ต้องการ แล้วกดบันทึก สถานะจะมีผลกับลูกค้าทุกเครื่อง</p>
     <label class="radio" style="display:block;margin:10px 0">
       <input type="radio" name="breadclipFormMode" value="open" ${currentMode === 'open' ? 'checked' : ''}>
-      เปิดฟอร์มเพื่อทดสอบ
-      <span>เปิดได้แม้เป็นวันเสาร์–อาทิตย์</span>
+      เปิดรับออเดอร์
+      <span>เปิดฟอร์มทันที ไม่จำกัดวัน</span>
     </label>
     <label class="radio" style="display:block;margin:10px 0">
       <input type="radio" name="breadclipFormMode" value="closed" ${currentMode === 'closed' ? 'checked' : ''}>
-      ปิดฟอร์มชั่วคราว
-      <span>แสดงหน้าปิดรับพรีออเดอร์</span>
+      ปิดรับออเดอร์
+      <span>ปิดฟอร์มทันทีจนกว่า Admin จะเปิดใหม่</span>
     </label>
+    <label class="radio" style="display:block;margin:10px 0">
+      <input type="radio" name="breadclipFormMode" value="auto" ${currentMode === 'auto' ? 'checked' : ''}>
+      เปิด–ปิดอัตโนมัติ
+      <span>เปิดจันทร์–ศุกร์ และปิดเสาร์–อาทิตย์</span>
+    </label>
+    <p data-form-mode-status style="display:none;font-weight:600;margin:10px 0 0;line-height:1.5"></p>
   `;
 
   saveButton.before(panel);
-  saveButton.addEventListener('click', () => {
+  saveButton.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
     const selected = panel.querySelector('input[name="breadclipFormMode"]:checked')?.value || 'auto';
-    localStorage.setItem(FORM_MODE_KEY, selected);
-    window.setTimeout(() => window.location.reload(), 250);
-  }, { capture: true });
+    const status = panel.querySelector('[data-form-mode-status]');
+    const originalText = saveButton.textContent;
+
+    status.style.display = 'block';
+    status.style.color = '#765';
+    status.textContent = 'กำลังบันทึกสถานะรับออเดอร์…';
+    saveButton.disabled = true;
+    saveButton.textContent = 'กำลังบันทึก…';
+
+    try {
+      const result = await setGlobalFormMode(selected);
+      saveFormMode(result.formMode);
+      status.style.color = '#327a5d';
+      status.textContent = result.isOpen ? 'เปิดรับออเดอร์แล้ว' : 'ปิดรับออเดอร์แล้ว';
+      window.setTimeout(() => window.location.reload(), 450);
+    } catch (error) {
+      status.style.color = '#8a321e';
+      status.textContent = `${error.message} — กรุณา Deploy Google Apps Script เวอร์ชันล่าสุด`;
+      saveButton.disabled = false;
+      saveButton.textContent = originalText;
+    }
+  }, true);
 }
 
 function closePinDialog() {
@@ -124,13 +183,8 @@ function openPinDialog(settingsButton) {
   `;
 
   Object.assign(overlay.style, {
-    position: 'fixed',
-    inset: '0',
-    zIndex: '9999',
-    padding: '20px',
-    background: 'rgba(0,0,0,.55)',
-    display: 'grid',
-    placeItems: 'center',
+    position: 'fixed', inset: '0', zIndex: '9999', padding: '20px',
+    background: 'rgba(0,0,0,.55)', display: 'grid', placeItems: 'center',
   });
 
   const form = overlay.querySelector('form');
@@ -189,6 +243,7 @@ const observer = new MutationObserver(() => {
   injectAdminFormMode();
 });
 observer.observe(document.documentElement, { childList: true, subtree: true });
+
 window.addEventListener('DOMContentLoaded', () => {
   correctProductLabels();
   removeCouponDisclosure();
