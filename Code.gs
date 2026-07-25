@@ -7,6 +7,10 @@ const CONFIG = {
   TIME_ZONE: 'Asia/Bangkok',
 };
 
+const ADMIN_PIN = '167990';
+const FORM_MODE_PROPERTY = 'BREAD_CLIP_FORM_MODE';
+const VALID_FORM_MODES = ['auto', 'open', 'closed'];
+
 const PRODUCT_PRICES = {
   original: 89,
   thaiTea: 89,
@@ -42,15 +46,21 @@ const ORDER_HEADERS = [
   'Total Before Discount',
 ];
 
-function doGet() {
+function doGet(event) {
   try {
+    const action = String((event && event.parameter && event.parameter.action) || '');
+    if (action === 'getFormStatus') return json_(getFormStatus_());
+
     const spreadsheet = getSpreadsheet_();
     const folder = getSlipFolder_();
+    const formStatus = getFormStatus_();
     return json_({
       ok: true,
       service: 'Bread Clip order backend',
       spreadsheetUrl: spreadsheet.getUrl(),
       folderUrl: folder.getUrl(),
+      formMode: formStatus.formMode,
+      isOpen: formStatus.isOpen,
     });
   } catch (error) {
     return json_({ ok: false, error: error.message || String(error) });
@@ -61,6 +71,10 @@ function doPost(event) {
   try {
     const payload = parsePayload_(event);
     const action = String(payload.action || 'submitOrder');
+
+    if (action === 'setFormMode') {
+      return json_(handleSetFormMode_(payload));
+    }
 
     if (action === 'validateCoupon') {
       return json_(handleCouponValidation_(payload));
@@ -77,6 +91,43 @@ function doPost(event) {
       message: error.message || String(error),
     });
   }
+}
+
+function handleSetFormMode_(payload) {
+  if (String(payload.adminPin || '') !== ADMIN_PIN) {
+    throw new Error('รหัสเจ้าของร้านไม่ถูกต้อง');
+  }
+
+  const mode = String(payload.formMode || '').trim().toLowerCase();
+  if (VALID_FORM_MODES.indexOf(mode) === -1) {
+    throw new Error('สถานะฟอร์มไม่ถูกต้อง');
+  }
+
+  PropertiesService.getScriptProperties().setProperty(FORM_MODE_PROPERTY, mode);
+  return getFormStatus_();
+}
+
+function getFormMode_() {
+  const saved = String(
+    PropertiesService.getScriptProperties().getProperty(FORM_MODE_PROPERTY) || 'auto'
+  ).toLowerCase();
+  return VALID_FORM_MODES.indexOf(saved) >= 0 ? saved : 'auto';
+}
+
+function getFormStatus_() {
+  const formMode = getFormMode_();
+  const weekday = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'EEE');
+  const weekdayOpen = weekday !== 'Sat' && weekday !== 'Sun';
+  const isOpen = formMode === 'open' || (formMode === 'auto' && weekdayOpen);
+
+  return {
+    ok: true,
+    status: 'success',
+    formMode: formMode,
+    isOpen: isOpen,
+    weekday: weekday,
+    timeZone: CONFIG.TIME_ZONE,
+  };
 }
 
 function handleCouponValidation_(payload) {
@@ -99,6 +150,10 @@ function handleSubmitOrder_(payload) {
   lock.waitLock(30000);
 
   try {
+    if (!getFormStatus_().isOpen) {
+      throw new Error('ขณะนี้ปิดรับพรีออเดอร์ กรุณารอรอบถัดไป');
+    }
+
     const customer = extractCustomer_(payload);
     if (!customer.name || !customer.phone || !customer.contact) {
       throw new Error('Missing customer details.');
@@ -201,6 +256,7 @@ function setupBreadClip() {
     spreadsheetUrl: spreadsheet.getUrl(),
     sheetName: sheet.getName(),
     folderUrl: folder.getUrl(),
+    formStatus: getFormStatus_(),
   };
 }
 
