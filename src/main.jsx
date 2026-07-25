@@ -7,7 +7,7 @@ import './admin-guard.js'
 import './promptpay-lock.js'
 import './coupon-safety.js'
 
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbyJSHTGFeJOQVoMGk5lxEblPyJ080L3dWKlJ5rhQN-2vprbSF_RWQ2gOKYMG_KiATSq/exec'
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw4DwcxpK_EBxfaLezs1q37j7gay2tLpamiPZzYobW8YeYrV79b5JQ_OFJENR-nOMmH/exec'
 const PROMPTPAY_ID = '1679900640970'
 const FORM_MODE_KEY = 'breadclip_admin_form_mode'
 const VALID_FORM_MODES = ['auto', 'open', 'closed']
