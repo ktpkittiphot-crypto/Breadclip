@@ -12,8 +12,8 @@ const PRODUCTS = [
 ];
 
 const COUPONS = Object.freeze({
-  kittiphotlnwza67: 10,
-  kittiphotandfriend: 20,
+  kittiphotlnwza67: { discount: 10, minSubtotal: 0 },
+  kittiphotandfriend: { discount: 20, minSubtotal: 100 },
 });
 
 const DELIVERY_AREAS = {
@@ -194,6 +194,17 @@ export default function App() {
     ? 'รับที่คณะวิจิตรศิลป์ • 12:00–13:00 • ฟรี'
     : `จัดส่ง ${deliveryAreaLabel} • ${deliveryTimeLabel} • ${deliveryFee === 0 ? 'ส่งฟรี' : '+5 บาท'}`;
 
+  useEffect(() => {
+    if (coupon.valid && coupon.code === 'kittiphotandfriend' && subtotal < 100) {
+      setCoupon({
+        code: '',
+        discount: 0,
+        valid: false,
+        message: 'คูปอง kittiphotandfriend ใช้ได้เมื่อยอดขนมครบ 100 บาทขึ้นไป',
+      });
+    }
+  }, [subtotal, coupon.code, coupon.valid]);
+
   let qrPayload = '';
   try {
     if (total > 0) qrPayload = generatePayload(LOCKED_PROMPTPAY_ID, total);
@@ -221,14 +232,24 @@ export default function App() {
       return;
     }
 
-    const discount = Number(COUPONS[code] || 0);
-    if (!discount) {
+    const rule = COUPONS[code];
+    if (!rule) {
       setCoupon({ code: '', discount: 0, valid: false, message: 'ไม่พบคูปองนี้ หรือคูปองไม่ถูกต้อง' });
       return;
     }
 
+    if (subtotal < rule.minSubtotal) {
+      setCoupon({
+        code: '',
+        discount: 0,
+        valid: false,
+        message: `คูปอง ${code} ใช้ได้เมื่อยอดขนมครบ ${rule.minSubtotal} บาทขึ้นไป`,
+      });
+      return;
+    }
+
     setCouponInput(code);
-    setCoupon({ code, discount, valid: true, message: `ใช้คูปองสำเร็จ ลด ${discount} บาท` });
+    setCoupon({ code, discount: rule.discount, valid: true, message: `ใช้คูปองสำเร็จ ลด ${rule.discount} บาท` });
     setStatus('');
   };
 
@@ -457,6 +478,7 @@ export default function App() {
                 <button className="primary-button" type="button" onClick={applyCoupon} style={{ width: 'auto', minWidth: '92px' }}>ใช้คูปอง</button>
               </div>
               {coupon.message && <p className={`status ${coupon.valid ? 'success' : 'error'}`} style={{ marginBottom: 0 }}>{String(coupon.message)}</p>}
+              <small style={{ display: 'block', marginTop: '10px', color: '#765', lineHeight: 1.6 }}>kittiphotandfriend ใช้ได้เมื่อยอดขนมครบ 100 บาทขึ้นไป</small>
             </section>
 
             <section className="card">
