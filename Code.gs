@@ -19,8 +19,8 @@ const PRODUCT_PRICES = {
 };
 
 const COUPONS = {
-  kittiphotlnwza67: 10,
-  kittiphotandfriend: 20,
+  kittiphotlnwza67: { discount: 10, minSubtotal: 0 },
+  kittiphotandfriend: { discount: 20, minSubtotal: 100 },
 };
 
 const ORDER_HEADERS = [
@@ -73,15 +73,10 @@ function doPost(event) {
     const payload = parsePayload_(event);
     const action = String(payload.action || 'submitOrder');
 
-    if (action === 'setFormMode') {
-      return json_(handleSetFormMode_(payload));
-    }
-
-    if (action === 'validateCoupon') {
-      return json_(handleCouponValidation_(payload));
-    }
-
+    if (action === 'setFormMode') return json_(handleSetFormMode_(payload));
+    if (action === 'validateCoupon') return json_(handleCouponValidation_(payload));
     if (action !== 'submitOrder') throw new Error('Unsupported action.');
+
     return json_(handleSubmitOrder_(payload));
   } catch (error) {
     console.error(error);
@@ -112,7 +107,6 @@ function getFormMode_() {
   const saved = String(
     PropertiesService.getScriptProperties().getProperty(FORM_MODE_PROPERTY) || 'auto'
   ).toLowerCase();
-
   return VALID_FORM_MODES.indexOf(saved) >= 0 ? saved : 'auto';
 }
 
@@ -133,7 +127,8 @@ function getFormStatus_() {
 }
 
 function handleCouponValidation_(payload) {
-  const result = validateCoupon_(payload.couponCode);
+  const subtotal = Number(payload.subtotal || 0);
+  const result = validateCoupon_(payload.couponCode, subtotal);
   return Object.assign({ ok: true, status: 'success' }, result);
 }
 
@@ -183,7 +178,7 @@ function handleSubmitOrder_(payload) {
       payload.couponCode ||
       (payload.orderData && payload.orderData.couponCode)
     );
-    const couponResult = validateCoupon_(couponCode);
+    const couponResult = validateCoupon_(couponCode, subtotal);
     if (!couponResult.eligible) throw new Error(couponResult.message);
 
     const couponDiscount = Number(couponResult.discount || 0);
@@ -344,33 +339,47 @@ function normalizeCouponCode_(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function validateCoupon_(couponCode) {
+function validateCoupon_(couponCode, subtotal) {
   const code = normalizeCouponCode_(couponCode);
+  const safeSubtotal = Number(subtotal || 0);
 
   if (!code) {
     return {
       eligible: true,
       couponCode: '',
       discount: 0,
+      minSubtotal: 0,
       message: '',
     };
   }
 
-  const discount = Number(COUPONS[code] || 0);
-  if (!discount) {
+  const rule = COUPONS[code];
+  if (!rule) {
     return {
       eligible: false,
       couponCode: code,
       discount: 0,
+      minSubtotal: 0,
       message: 'ไม่พบคูปองนี้ หรือคูปองไม่ถูกต้อง',
+    };
+  }
+
+  if (safeSubtotal < Number(rule.minSubtotal || 0)) {
+    return {
+      eligible: false,
+      couponCode: code,
+      discount: 0,
+      minSubtotal: Number(rule.minSubtotal || 0),
+      message: 'คูปอง ' + code + ' ใช้ได้เมื่อยอดขนมครบ ' + rule.minSubtotal + ' บาทขึ้นไป',
     };
   }
 
   return {
     eligible: true,
     couponCode: code,
-    discount: discount,
-    message: 'ใช้คูปองได้ ลด ' + discount + ' บาท',
+    discount: Number(rule.discount || 0),
+    minSubtotal: Number(rule.minSubtotal || 0),
+    message: 'ใช้คูปองได้ ลด ' + rule.discount + ' บาท',
   };
 }
 
