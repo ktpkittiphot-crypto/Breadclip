@@ -19,7 +19,7 @@ const PRODUCT_PRICES = {
 };
 
 const COUPONS = {
-  kittiphotlnwza67: { discount: 10, minSubtotal: 0 },
+  kittiphotlnwza67: { discount: 10, minSubtotal: 50 },
   kittiphotandfriend: { discount: 20, minSubtotal: 100 },
 };
 
@@ -187,7 +187,7 @@ function handleSubmitOrder_(payload) {
         ? payload.couponQualifiedSubtotal
         : (payload.orderData && payload.orderData.couponQualifiedSubtotal) || 0
     );
-    const couponValidationSubtotal = couponCode === 'kittiphotandfriend'
+    const couponValidationSubtotal = couponCode
       ? couponQualifiedSubtotal
       : subtotal;
     const couponResult = validateCoupon_(couponCode, couponValidationSubtotal);
