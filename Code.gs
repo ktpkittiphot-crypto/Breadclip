@@ -127,8 +127,12 @@ function getFormStatus_() {
 }
 
 function handleCouponValidation_(payload) {
-  const subtotal = Number(payload.subtotal || 0);
-  const result = validateCoupon_(payload.couponCode, subtotal);
+  const qualifiedSubtotal = Number(
+    payload.couponQualifiedSubtotal != null
+      ? payload.couponQualifiedSubtotal
+      : payload.subtotal || 0
+  );
+  const result = validateCoupon_(payload.couponCode, qualifiedSubtotal);
   return Object.assign({ ok: true, status: 'success' }, result);
 }
 
@@ -178,7 +182,15 @@ function handleSubmitOrder_(payload) {
       payload.couponCode ||
       (payload.orderData && payload.orderData.couponCode)
     );
-    const couponResult = validateCoupon_(couponCode, subtotal);
+    const couponQualifiedSubtotal = Number(
+      payload.couponQualifiedSubtotal != null
+        ? payload.couponQualifiedSubtotal
+        : (payload.orderData && payload.orderData.couponQualifiedSubtotal) || 0
+    );
+    const couponValidationSubtotal = couponCode === 'kittiphotandfriend'
+      ? couponQualifiedSubtotal
+      : subtotal;
+    const couponResult = validateCoupon_(couponCode, couponValidationSubtotal);
     if (!couponResult.eligible) throw new Error(couponResult.message);
 
     const couponDiscount = Number(couponResult.discount || 0);
@@ -370,7 +382,7 @@ function validateCoupon_(couponCode, subtotal) {
       couponCode: code,
       discount: 0,
       minSubtotal: Number(rule.minSubtotal || 0),
-      message: 'คูปอง ' + code + ' ใช้ได้เมื่อยอดขนมครบ ' + rule.minSubtotal + ' บาทขึ้นไป',
+      message: 'คูปอง ' + code + ' ใช้ได้เมื่อยอดขนมครบ ' + rule.minSubtotal + ' บาทขึ้นไปตอนกดใช้คูปอง',
     };
   }
 
