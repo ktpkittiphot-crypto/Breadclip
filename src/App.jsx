@@ -150,7 +150,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isPreorderOpen, setIsPreorderOpen] = useState(() => isPreorderOpenNow());
   const [couponInput, setCouponInput] = useState('');
-  const [coupon, setCoupon] = useState({ code: '', discount: 0, message: '', valid: false });
+  const [coupon, setCoupon] = useState({ code: '', discount: 0, qualifiedSubtotal: 0, message: '', valid: false });
   const [slip, setSlip] = useState(null);
   const [slipPreview, setSlipPreview] = useState('');
   const [slipCheck, setSlipCheck] = useState({ state: 'idle', message: '' });
@@ -194,17 +194,6 @@ export default function App() {
     ? 'รับที่คณะวิจิตรศิลป์ • 12:00–13:00 • ฟรี'
     : `จัดส่ง ${deliveryAreaLabel} • ${deliveryTimeLabel} • ${deliveryFee === 0 ? 'ส่งฟรี' : '+5 บาท'}`;
 
-  useEffect(() => {
-    if (coupon.valid && coupon.code === 'kittiphotandfriend' && subtotal < 100) {
-      setCoupon({
-        code: '',
-        discount: 0,
-        valid: false,
-        message: 'คูปอง kittiphotandfriend ใช้ได้เมื่อยอดขนมครบ 100 บาทขึ้นไป',
-      });
-    }
-  }, [subtotal, coupon.code, coupon.valid]);
-
   let qrPayload = '';
   try {
     if (total > 0) qrPayload = generatePayload(LOCKED_PROMPTPAY_ID, total);
@@ -228,13 +217,13 @@ export default function App() {
   const applyCoupon = () => {
     const code = normalizeCouponCode(couponInput);
     if (!code) {
-      setCoupon({ code: '', discount: 0, valid: false, message: 'กรุณากรอกรหัสคูปอง' });
+      setCoupon({ code: '', discount: 0, qualifiedSubtotal: 0, valid: false, message: 'กรุณากรอกรหัสคูปอง' });
       return;
     }
 
     const rule = COUPONS[code];
     if (!rule) {
-      setCoupon({ code: '', discount: 0, valid: false, message: 'ไม่พบคูปองนี้ หรือคูปองไม่ถูกต้อง' });
+      setCoupon({ code: '', discount: 0, qualifiedSubtotal: 0, valid: false, message: 'ไม่พบคูปองนี้ หรือคูปองไม่ถูกต้อง' });
       return;
     }
 
@@ -242,6 +231,7 @@ export default function App() {
       setCoupon({
         code: '',
         discount: 0,
+        qualifiedSubtotal: 0,
         valid: false,
         message: `คูปอง ${code} ใช้ได้เมื่อยอดขนมครบ ${rule.minSubtotal} บาทขึ้นไป`,
       });
@@ -249,7 +239,13 @@ export default function App() {
     }
 
     setCouponInput(code);
-    setCoupon({ code, discount: rule.discount, valid: true, message: `ใช้คูปองสำเร็จ ลด ${rule.discount} บาท` });
+    setCoupon({
+      code,
+      discount: rule.discount,
+      qualifiedSubtotal: subtotal,
+      valid: true,
+      message: `ใช้คูปองสำเร็จ ลด ${rule.discount} บาท`,
+    });
     setStatus('');
   };
 
@@ -313,6 +309,7 @@ export default function App() {
 
       const slipDataUrl = await fileToDataUrl(slip);
       const items = Object.fromEntries(PRODUCTS.map((product) => [product.key, Number(form[product.id] || 0)]));
+      const couponQualifiedSubtotal = coupon.valid ? Number(coupon.qualifiedSubtotal || 0) : 0;
       const orderData = {
         name: form.name.trim(),
         phone: form.phone.trim(),
@@ -328,6 +325,7 @@ export default function App() {
         deliveryTime: deliveryTimeLabel,
         customAddress: form.deliveryOption === 'delivery' ? `สถานที่: ${deliveryAreaLabel} | เวลา: ${deliveryTimeLabel}` : '',
         couponCode: coupon.valid ? coupon.code : '',
+        couponQualifiedSubtotal,
       };
       const payload = {
         action: 'submitOrder',
@@ -348,6 +346,7 @@ export default function App() {
         deliveryFee,
         couponCode: orderData.couponCode,
         couponDiscount,
+        couponQualifiedSubtotal,
         totalBeforeDiscount,
         total,
         totalCost: total,
@@ -468,7 +467,7 @@ export default function App() {
                     value={couponInput}
                     onChange={(event) => {
                       setCouponInput(event.target.value);
-                      setCoupon({ code: '', discount: 0, valid: false, message: '' });
+                      setCoupon({ code: '', discount: 0, qualifiedSubtotal: 0, valid: false, message: '' });
                     }}
                     placeholder="กรอกรหัสคูปอง"
                     autoCapitalize="none"
@@ -478,7 +477,7 @@ export default function App() {
                 <button className="primary-button" type="button" onClick={applyCoupon} style={{ width: 'auto', minWidth: '92px' }}>ใช้คูปอง</button>
               </div>
               {coupon.message && <p className={`status ${coupon.valid ? 'success' : 'error'}`} style={{ marginBottom: 0 }}>{String(coupon.message)}</p>}
-              <small style={{ display: 'block', marginTop: '10px', color: '#765', lineHeight: 1.6 }}>kittiphotandfriend ใช้ได้เมื่อยอดขนมครบ 100 บาทขึ้นไป</small>
+              <small style={{ display: 'block', marginTop: '10px', color: '#765', lineHeight: 1.6 }}>kittiphotandfriend ต้องมียอดขนมครบ 100 บาทขึ้นไปตอนกดใช้คูปอง</small>
             </section>
 
             <section className="card">
