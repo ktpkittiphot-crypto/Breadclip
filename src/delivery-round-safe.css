@@ -1,0 +1,59 @@
+.hero > p {
+  display: none !important;
+}
+
+.hero::after {
+  display: block;
+  margin-top: 12px;
+  font-size: 15px;
+  line-height: 1.7;
+  color: inherit;
+}
+
+html[data-delivery-day='thursday'] .hero::after {
+  content: 'รอบส่งวันจันทร์และพฤหัสบดี • ออเดอร์วันนี้ส่งวันพฤหัสบดี\Aจันทร์–พุธ → ส่งวันพฤหัสบดี • พฤหัสบดี–อาทิตย์ → ส่งวันจันทร์';
+  white-space: pre-line;
+}
+
+html[data-delivery-day='monday'] .hero::after {
+  content: 'รอบส่งวันจันทร์และพฤหัสบดี • ออเดอร์วันนี้ส่งวันจันทร์\Aจันทร์–พุธ → ส่งวันพฤหัสบดี • พฤหัสบดี–อาทิตย์ → ส่งวันจันทร์';
+  white-space: pre-line;
+}
+
+.checkout-card::before {
+  display: block;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #eef8f2;
+  color: #327a5d;
+  font-weight: 700;
+}
+
+html[data-delivery-day='thursday'] .checkout-card::before {
+  content: 'ออเดอร์รอบนี้ส่งวันพฤหัสบดี';
+}
+
+html[data-delivery-day='monday'] .checkout-card::before {
+  content: 'ออเดอร์รอบนี้ส่งวันจันทร์';
+}
+
+.success-card > p:nth-of-type(2) {
+  display: none !important;
+}
+
+.success-card::after {
+  display: block;
+  margin-top: 14px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #4c2f23;
+}
+
+html[data-delivery-day='thursday'] .success-card::after {
+  content: 'รอรับขนมวันพฤหัสบดีนะครับ 🍰';
+}
+
+html[data-delivery-day='monday'] .success-card::after {
+  content: 'รอรับขนมวันจันทร์นะครับ 🍰';
+}
