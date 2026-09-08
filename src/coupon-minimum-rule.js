@@ -18,25 +18,6 @@ function calculateProductSubtotal() {
   }, 0)
 }
 
-function removeMinimumMessage(card) {
-  card?.querySelector('[data-coupon-minimum-message]')?.remove()
-}
-
-function showMinimumMessage(card) {
-  if (!card) return
-
-  removeMinimumMessage(card)
-  const message = document.createElement('p')
-  message.dataset.couponMinimumMessage = 'true'
-  message.className = 'status error'
-  message.style.marginBottom = '0'
-  message.textContent = `คูปอง ${TARGET_COUPON} ใช้ได้เมื่อยอดขนมครบ ${MINIMUM_SUBTOTAL} บาทขึ้นไป`
-
-  const inputRow = card.querySelector('label')?.parentElement
-  if (inputRow) inputRow.insertAdjacentElement('afterend', message)
-  else card.appendChild(message)
-}
-
 document.addEventListener('click', (event) => {
   const button = event.target.closest('button')
   if (!button || button.type !== 'button' || button.textContent.trim() !== 'ใช้คูปอง') return
@@ -45,25 +26,11 @@ document.addEventListener('click', (event) => {
   const couponInput = card?.querySelector('input')
   const code = normalizeCouponCode(couponInput?.value)
 
-  if (code !== TARGET_COUPON) {
-    removeMinimumMessage(card)
-    return
-  }
-
-  if (calculateProductSubtotal() >= MINIMUM_SUBTOTAL) {
-    removeMinimumMessage(card)
-    return
-  }
+  if (code !== TARGET_COUPON) return
+  if (calculateProductSubtotal() >= MINIMUM_SUBTOTAL) return
 
   event.preventDefault()
   event.stopPropagation()
   event.stopImmediatePropagation()
-  showMinimumMessage(card)
+  window.alert(`คูปอง ${TARGET_COUPON} ใช้ได้เมื่อยอดขนมครบ ${MINIMUM_SUBTOTAL} บาทขึ้นไป`)
 }, true)
-
-document.addEventListener('input', (event) => {
-  const input = event.target.closest('input')
-  const card = input?.closest('.card')
-  if (!card || !card.querySelector('button[type="button"]')) return
-  removeMinimumMessage(card)
-})
